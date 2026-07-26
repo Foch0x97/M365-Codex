@@ -23,10 +23,12 @@ data/
 *.db
 
 # 账号与凭据文件（严禁入库）
+# 注意：目录规则必须用 / 锚定到仓库根，否则会误伤 apps/server/src/accounts/ 这类源码目录
 accounts.json
-accounts/
 tokens.json
 cookies.txt
+/accounts/
+/tokens/
 
 # 探针输出（可能含未脱敏样本）
 probe/out/
