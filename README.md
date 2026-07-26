@@ -184,6 +184,8 @@ environment:
 
 刷新凭据失效时账号会自动转入 `reauth_required` 并停止重试；人工停用的账号不会因一次重新授权被悄悄启用。
 
+三种方式的完整说明见 [docs/对接M365-Native授权助手.md](docs/对接M365-Native授权助手.md)。
+
 ---
 
 ## 安全设计
