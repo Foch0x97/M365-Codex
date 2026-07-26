@@ -43,6 +43,8 @@ export async function runText(
     toolResults: options.toolResults,
     handshakeTimeoutMs: ctx.upstream.handshakeTimeoutMs,
     scenario: ctx.upstream.scenario,
+    // 真实客户端会带 participant.id，探针也带上，否则探出来的形态不作数
+    oid: ctx.account.oid,
     idleTimeoutMs: ctx.upstream.idleTimeoutMs,
     totalTimeoutMs: options.totalTimeoutMs ?? ctx.invocationTimeoutMs,
     signal: options.signal,

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import WebSocket from 'ws';
 import { afterEach, describe, expect, it } from 'vitest';
 import { startMockSydneyServer, type MockSydneyServer } from '../../apps/server/test/helpers/mockSydneyServer.js';
 import { SydneyCodecV1 } from '../../apps/server/dist/adapter/codecV1.js';
@@ -111,3 +112,61 @@ describe('runRawSession', () => {
     expect(kinds).toEqual(['tool_call_begin', 'tool_call_args_delta', 'tool_call_end', 'completed']);
   });
 });
+
+describe('participant.id', () => {
+  // 这个字段是可选的，漏传不会报错、不会失败，只会让探针发出的请求
+  // 和真实客户端不一样——而探针的全部价值就在于「贴近真实形态」。
+  // 它已经悄悄漏过一次，所以这里用一条测试钉住它。
+  it('传了 oid 就会编码进 invocation 的 participant.id', async () => {
+    server = await startMockSydneyServer({ kind: 'normal', chunks: ['ok'] });
+    const sent: string[] = [];
+    await runRawSession({
+      ...baseOptions(server.url),
+      oid: 'test-object-id',
+      wsFactory: (url: string) => capturingSocket(url, sent),
+    });
+
+    const invocation = sent.map(parseFrames).flat().find((m) => m.target === 'chat');
+    expect(invocation).toBeDefined();
+    const argument = (invocation?.arguments?.[0] ?? {}) as { participant?: { id?: string } };
+    expect(argument.participant?.id).toBe('test-object-id');
+  });
+
+  it('没传 oid 时不会凭空造出 participant 字段', async () => {
+    server = await startMockSydneyServer({ kind: 'normal', chunks: ['ok'] });
+    const sent: string[] = [];
+    await runRawSession({
+      ...baseOptions(server.url),
+      wsFactory: (url: string) => capturingSocket(url, sent),
+    });
+
+    const invocation = sent.map(parseFrames).flat().find((m) => m.target === 'chat');
+    expect(invocation).toBeDefined();
+    expect((invocation?.arguments?.[0] as Record<string, unknown>).participant).toBeUndefined();
+  });
+});
+
+/** 包一层 WebSocket，把发出去的帧记下来供断言。 */
+function capturingSocket(url: string, sent: string[]): WebSocket {
+  const ws = new WebSocket(url, { headers: { 'X-Scenario': 'officeweb' } });
+  const original = ws.send.bind(ws);
+  ws.send = ((data: unknown) => {
+    sent.push(String(data));
+    return original(data as Parameters<typeof original>[0]);
+  }) as typeof ws.send;
+  return ws;
+}
+
+/** 一条 WebSocket 消息里可能含多个 0x1e 分隔的帧。 */
+function parseFrames(raw: string): { target?: string; arguments?: unknown[] }[] {
+  return raw
+    .split('\u001e')
+    .filter((part) => part.length > 0)
+    .flatMap((part) => {
+      try {
+        return [JSON.parse(part) as { target?: string; arguments?: unknown[] }];
+      } catch {
+        return [];
+      }
+    });
+}

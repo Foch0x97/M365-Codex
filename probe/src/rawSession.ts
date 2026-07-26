@@ -36,6 +36,13 @@ export interface RawSessionOptions {
   handshakeTimeoutMs: number;
   /** 握手必须带的 X-Scenario 头；不带一律 403 */
   scenario: string;
+  /**
+   * 账号的对象 ID，编码成 invocation 里的 `participant.id`。
+   *
+   * M0 实测：真实上游能正确解析的请求，`arguments[0]` 顶层都带这个字段。
+   * 探针的目的是贴近真实客户端的形态，缺了它探出来的结论就不可信。
+   */
+  oid?: string | undefined;
   idleTimeoutMs: number;
   /** 整个 invocation 的硬超时（含握手），超过则判定失败并关闭连接 */
   totalTimeoutMs: number;
@@ -202,6 +209,7 @@ export async function runRawSession(options: RawSessionOptions): Promise<Invocat
               invocationId: options.invocationId,
               text: options.text,
               conversationRef: options.conversationRef,
+              participantId: options.oid,
               passthrough: options.passthrough,
               tools: options.tools,
               toolResults: options.toolResults,
