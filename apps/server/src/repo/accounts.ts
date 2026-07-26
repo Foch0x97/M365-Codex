@@ -375,8 +375,33 @@ export class AccountRepository {
     return this.getView(accountId);
   }
 
+  /**
+   * 删除账号。
+   *
+   * `account_tokens` 与 `account_health` 是 ON DELETE CASCADE，会自己跟着走；
+   * 但 `responses.account_id` 与 `conversation_bindings.account_id` 只是普通外键，
+   * 账号一旦服务过请求就会把它钉死在库里——直接 DELETE 会撞 FOREIGN KEY constraint。
+   *
+   * 两张表的处置不同，因为语义不同：
+   * - `responses` 是历史记录，**留下来**，只把 account_id 置空（这条请求确实发生过，
+   *   只是不再知道由哪个账号承担；列本来就可空）；
+   * - `conversation_bindings` 是「Response ↔ 账号 ↔ 上游会话」的粘性绑定，
+   *   账号没了绑定就没有意义，**直接删掉**，免得留下指向空账号的僵尸行。
+   */
   remove(accountId: string): boolean {
-    return Number(this.#db.prepare('DELETE FROM accounts WHERE id = ?').run(accountId).changes) > 0;
+    this.#db.exec('BEGIN IMMEDIATE');
+    try {
+      this.#db.prepare('DELETE FROM conversation_bindings WHERE account_id = ?').run(accountId);
+      this.#db.prepare('UPDATE responses SET account_id = NULL WHERE account_id = ?').run(accountId);
+      const changes = Number(
+        this.#db.prepare('DELETE FROM accounts WHERE id = ?').run(accountId).changes,
+      );
+      this.#db.exec('COMMIT');
+      return changes > 0;
+    } catch (error) {
+      this.#db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   #tokenRow(accountId: string): AccountTokenRow | undefined {

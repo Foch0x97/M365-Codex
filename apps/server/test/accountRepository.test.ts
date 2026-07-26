@@ -218,6 +218,47 @@ describe('删除', () => {
     expect(db!.prepare('SELECT COUNT(*) AS c FROM account_tokens').get()).toEqual({ c: 0 });
     expect(db!.prepare('SELECT COUNT(*) AS c FROM account_health').get()).toEqual({ c: 0 });
   });
+
+  // 线上实测撞到的：账号一旦服务过请求，responses.account_id 与
+  // conversation_bindings.account_id 这两个普通外键会把它钉死，删除直接 500
+  it('账号服务过请求后仍能删除：历史记录留下、粘性绑定清掉', () => {
+    const repo = createRepo();
+    const view = seed(repo);
+
+    db!
+      .prepare(
+        `INSERT INTO responses (id, api_key_id, account_id, status, created_at, updated_at)
+         VALUES ('resp_1', NULL, ?, 'completed', 1, 1)`,
+      )
+      .run(view.id);
+    db!
+      .prepare(
+        `INSERT INTO conversation_bindings (response_id, account_id, upstream_conversation_ref, created_at)
+         VALUES ('resp_1', ?, 'conv-1', 1)`,
+      )
+      .run(view.id);
+
+    expect(repo.remove(view.id)).toBe(true);
+
+    // 请求确实发生过，记录要留；只是不再知道由哪个账号承担
+    const response = db!.prepare('SELECT account_id, status FROM responses WHERE id = ?').get('resp_1') as {
+      account_id: string | null;
+      status: string;
+    };
+    expect(response.status).toBe('completed');
+    expect(response.account_id).toBeNull();
+    // 绑定没了账号就没有意义，不留僵尸行
+    expect(db!.prepare('SELECT COUNT(*) AS c FROM conversation_bindings').get()).toEqual({ c: 0 });
+  });
+
+  it('删除失败时整体回滚，不会留下半删状态', () => {
+    const repo = createRepo();
+    const view = seed(repo);
+    // 删一个不存在的 ID：不应影响既有账号，也不该抛错
+    expect(repo.remove('not-a-real-account')).toBe(false);
+    expect(repo.getView(view.id)).toBeDefined();
+    expect(db!.prepare('SELECT COUNT(*) AS c FROM account_tokens').get()).toEqual({ c: 1 });
+  });
 });
 
 describe('视图', () => {
