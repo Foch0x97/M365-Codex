@@ -66,7 +66,9 @@ jobs:
         run: |
           set -euo pipefail
           echo "检查是否误提交 .env 或账号文件"
-          if git ls-files | grep -Ev '^\.env\.example$' | grep -E '(^|/)(\.env($|\.)|accounts?\.json|tokens?\.json|cookies\.txt)'; then
+          # 排除模式必须允许**任意层级**的 .env.example：只锚定仓库根的话，
+          # apps/web/.env.example 这类子包示例文件会被误判成疑似凭据文件。
+          if git ls-files | grep -Ev '(^|/)\.env\.example$' | grep -E '(^|/)(\.env($|\.)|accounts?\.json|tokens?\.json|cookies\.txt)'; then
             echo "::error::检测到疑似凭据文件被提交"
             exit 1
           fi
