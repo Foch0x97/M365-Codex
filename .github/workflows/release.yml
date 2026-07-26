@@ -19,6 +19,8 @@ on:
 
 permissions:
   contents: read
+  # cosign 无密钥签名要用 OIDC 令牌换取短期证书
+  id-token: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -58,7 +60,11 @@ jobs:
             # latest 跟随任意 v* 版本 tag 或正式 Release
             type=raw,value=latest,enable=${{ github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') }}
 
+      - name: 安装 cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
       - name: 构建并推送
+        id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
@@ -71,7 +77,19 @@ jobs:
           provenance: true
           sbom: true
 
+      # 无密钥签名：证书由 Sigstore 依据 GitHub OIDC 身份签发，不需要在仓库里存私钥。
+      # 验证方式（写进 README）：
+      #   cosign verify docker.io/<用户名>/m365-codex:<标签> \
+      #     --certificate-identity-regexp '^https://github.com/.+/M365-Codex/.github/workflows/release.yml@.+' \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+      - name: 用 cosign 签名镜像
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_REPOSITORY }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
       - name: 输出已推送的标签
         run: |
           echo "已推送以下镜像标签到 Docker Hub："
           echo "${{ steps.meta.outputs.tags }}"
+          echo "镜像摘要：${{ steps.build.outputs.digest }}（已用 cosign 无密钥签名）"

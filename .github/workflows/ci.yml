@@ -110,6 +110,17 @@ jobs:
           docker stop --timeout 15 m365-codex-ci
           test "$(docker inspect -f '{{.State.ExitCode}}' m365-codex-ci)" = "0"
 
+      # 镜像漏洞扫描：只阻断 HIGH/CRITICAL，且只看有修复版本的（无补丁可打的
+      # 基础镜像漏洞卡住发布没有意义，那属于跟进基础镜像更新的事）
+      - name: 镜像漏洞扫描
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          image-ref: m365-codex:ci
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
       # 反向验证：护栏要求「无主密钥拒绝启动」，这里用真实容器确认。
       # 与上面的冒烟合并在同一个任务里，复用已构建的镜像——单独开一个任务
       # 会重复构建一次，既慢又多一次拉取远端的机会（曾因此偶发失败）。
