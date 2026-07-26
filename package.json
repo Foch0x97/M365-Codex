@@ -1,0 +1,35 @@
+{
+  "name": "m365-codex",
+  "version": "0.1.0",
+  "private": true,
+  "description": "让 Codex 通过自定义 base_url + sk- 密钥使用 Microsoft 365 Copilot 上游的本地兼容网关（非官方项目）",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/shared",
+    "apps/server"
+  ],
+  "scripts": {
+    "build": "tsc -b apps/server",
+    "clean": "tsc -b --clean apps/server",
+    "dev": "npm run dev --workspace @m365-codex/server",
+    "start": "node apps/server/dist/server.js",
+    "test": "npm run test --workspace @m365-codex/server",
+    "test:coverage": "npm run test:coverage --workspace @m365-codex/server",
+    "typecheck": "tsc -b apps/server && tsc --noEmit -p apps/server/tsconfig.test.json",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.0.0",
+    "eslint": "^10.8.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^3.0.0"
+  }
+}

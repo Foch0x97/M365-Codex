@@ -1,0 +1,167 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import type { ApiKeyCreated } from '@m365-codex/shared';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { ApiError } from '@m365-codex/shared';
+import { createApiKeyGuard, LoginThrottle } from '../src/gateway/auth.js';
+import { createTestHarness, type TestHarness } from './helpers/testApp.js';
+
+/**
+ * API Key 网关守卫的直接测试。
+ * 这里自建一个最小 Fastify 实例挂载守卫，避免为了测试在生产路由表里加临时端点。
+ */
+
+let harness: TestHarness | undefined;
+let probe: FastifyInstance | undefined;
+
+afterEach(async () => {
+  await probe?.close();
+  probe = undefined;
+  await harness?.close();
+  harness = undefined;
+});
+
+async function buildProbe(): Promise<{ harness: TestHarness; probe: FastifyInstance; key: string }> {
+  harness = await createTestHarness();
+  const created = harness.context.apiKeys.create({ name: '网关测试' }) as ApiKeyCreated;
+
+  probe = Fastify({ logger: false });
+  probe.setErrorHandler<Error>((error, request, reply) => {
+    if (error instanceof ApiError) {
+      reply.code(error.status).send(error.toBody(String(request.id)));
+      return;
+    }
+    reply.code(500).send({ message: error.message });
+  });
+  probe.get('/guarded', { preHandler: createApiKeyGuard(harness.context) }, async (request) => ({
+    api_key_id: request.apiKeyRow?.id,
+  }));
+  await probe.ready();
+
+  return { harness, probe, key: created.key };
+}
+
+describe('extractApiKey', () => {
+  it('同时支持 Authorization 与 X-API-Key', async () => {
+    const { probe: p, key } = await buildProbe();
+    const viaBearer = await p.inject({
+      method: 'GET',
+      url: '/guarded',
+      headers: { authorization: `Bearer ${key}` },
+    });
+    const viaHeader = await p.inject({ method: 'GET', url: '/guarded', headers: { 'x-api-key': key } });
+    expect(viaBearer.statusCode).toBe(200);
+    expect(viaHeader.statusCode).toBe(200);
+  });
+});
+
+describe('createApiKeyGuard', () => {
+  it('缺少 Key 返回 401', async () => {
+    const { probe: p } = await buildProbe();
+    const response = await p.inject({ method: 'GET', url: '/guarded' });
+    expect(response.statusCode).toBe(401);
+    expect((response.json() as { error: { type: string } }).error.type).toBe('authentication_error');
+  });
+
+  it('格式非法的 Key 返回 401', async () => {
+    const { probe: p } = await buildProbe();
+    const response = await p.inject({
+      method: 'GET',
+      url: '/guarded',
+      headers: { 'x-api-key': 'not-a-key' },
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('未知但格式合法的 Key 返回 401', async () => {
+    const { probe: p } = await buildProbe();
+    const response = await p.inject({
+      method: 'GET',
+      url: '/guarded',
+      headers: { 'x-api-key': `sk-${'a'.repeat(52)}` },
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('停用的 Key 返回 403 并说明原因', async () => {
+    const { harness: h, probe: p, key } = await buildProbe();
+    const row = h.db.prepare('SELECT id FROM api_keys LIMIT 1').get() as { id: string };
+    h.context.apiKeys.update(row.id, { enabled: false });
+
+    const response = await p.inject({ method: 'GET', url: '/guarded', headers: { 'x-api-key': key } });
+    expect(response.statusCode).toBe(403);
+    expect((response.json() as { error: { message: string } }).error.message).toContain('停用');
+  });
+
+  it('撤销的 Key 返回 403', async () => {
+    const { harness: h, probe: p, key } = await buildProbe();
+    const row = h.db.prepare('SELECT id FROM api_keys LIMIT 1').get() as { id: string };
+    h.context.apiKeys.revoke(row.id);
+
+    const response = await p.inject({ method: 'GET', url: '/guarded', headers: { 'x-api-key': key } });
+    expect(response.statusCode).toBe(403);
+    expect((response.json() as { error: { message: string } }).error.message).toContain('撤销');
+  });
+
+  it('尚未生效与已过期的 Key 都返回 403', async () => {
+    harness = await createTestHarness();
+    const future = harness.context.apiKeys.create({ name: '未来', startsAt: Date.now() + 60_000 });
+    const expired = harness.context.apiKeys.create({ name: '过期', expiresAt: Date.now() - 1 });
+
+    probe = Fastify({ logger: false });
+    probe.setErrorHandler<Error>((error, request, reply) => {
+      if (error instanceof ApiError) {
+        reply.code(error.status).send(error.toBody(String(request.id)));
+        return;
+      }
+      reply.code(500).send({ message: error.message });
+    });
+    probe.get('/guarded', { preHandler: createApiKeyGuard(harness.context) }, async () => ({ ok: true }));
+    await probe.ready();
+
+    const notYet = await probe.inject({
+      method: 'GET',
+      url: '/guarded',
+      headers: { 'x-api-key': future.key },
+    });
+    const tooLate = await probe.inject({
+      method: 'GET',
+      url: '/guarded',
+      headers: { 'x-api-key': expired.key },
+    });
+    expect(notYet.statusCode).toBe(403);
+    expect(notYet.body).toContain('尚未生效');
+    expect(tooLate.statusCode).toBe(403);
+    expect(tooLate.body).toContain('过期');
+  });
+
+  it('通过校验后记录最近使用时间', async () => {
+    const { harness: h, probe: p, key } = await buildProbe();
+    await p.inject({ method: 'GET', url: '/guarded', headers: { 'x-api-key': key } });
+    const row = h.db.prepare('SELECT last_used_at FROM api_keys LIMIT 1').get() as {
+      last_used_at: number | null;
+    };
+    expect(row.last_used_at).toBeTypeOf('number');
+  });
+});
+
+describe('LoginThrottle', () => {
+  it('超过阈值后抛出限流错误，重置后恢复', () => {
+    const throttle = new LoginThrottle(3, 60_000);
+    const now = Date.now();
+    for (let i = 0; i < 3; i += 1) {
+      throttle.check('1.2.3.4', now);
+      throttle.recordFailure('1.2.3.4', now);
+    }
+    expect(() => throttle.check('1.2.3.4', now)).toThrow(/登录失败次数过多/);
+    throttle.reset('1.2.3.4');
+    expect(() => throttle.check('1.2.3.4', now)).not.toThrow();
+  });
+
+  it('时间窗口过期后自动放行', () => {
+    const throttle = new LoginThrottle(1, 1_000);
+    const now = Date.now();
+    throttle.recordFailure('5.6.7.8', now);
+    expect(() => throttle.check('5.6.7.8', now)).toThrow();
+    expect(() => throttle.check('5.6.7.8', now + 2_000)).not.toThrow();
+  });
+});

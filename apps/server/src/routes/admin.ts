@@ -1,0 +1,194 @@
+import { ApiError } from '@m365-codex/shared';
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import type { AppContext } from '../context.js';
+import { verifyPassword } from '../crypto/password.js';
+import { clientIpFor, createAdminGuard, extractBearerToken, LoginThrottle } from '../gateway/auth.js';
+import { maskIp } from '../observability/logger.js';
+
+/** 管理端接口：登录、会话、API Key 管理、审计日志查询。 */
+
+const loginSchema = z.object({
+  password: z.string().min(1, '密码不能为空'),
+});
+
+const timestamp = z.number().int().nonnegative().nullable().optional();
+const positiveInt = z.number().int().positive().nullable().optional();
+const stringList = z.array(z.string().min(1)).nullable().optional();
+
+const createKeySchema = z.object({
+  name: z.string().min(1, '名称不能为空').max(100, '名称过长'),
+  starts_at: timestamp,
+  expires_at: timestamp,
+  rpm_limit: positiveInt,
+  daily_limit: positiveInt,
+  max_concurrency: positiveInt,
+  allowed_endpoints: stringList,
+  allowed_models: stringList,
+});
+
+const updateKeySchema = z
+  .object({
+    name: z.string().min(1).max(100).optional(),
+    enabled: z.boolean().optional(),
+    starts_at: timestamp,
+    expires_at: timestamp,
+    rpm_limit: positiveInt,
+    daily_limit: positiveInt,
+    max_concurrency: positiveInt,
+    allowed_endpoints: stringList,
+    allowed_models: stringList,
+  })
+  .refine((value) => Object.keys(value).length > 0, { message: '至少需要提供一个待更新字段' });
+
+function parseOrThrow<T>(schema: z.ZodType<T>, payload: unknown): T {
+  const result = schema.safeParse(payload);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    throw ApiError.badRequest(issue?.message ?? '请求体不合法', issue?.path.join('.') || undefined);
+  }
+  return result.data;
+}
+
+function assertValidWindow(startsAt: number | null | undefined, expiresAt: number | null | undefined): void {
+  if (startsAt != null && expiresAt != null && expiresAt <= startsAt) {
+    throw ApiError.badRequest('expires_at 必须晚于 starts_at', 'expires_at');
+  }
+}
+
+export function registerAdminRoutes(app: FastifyInstance, context: AppContext): void {
+  const adminGuard = createAdminGuard(context);
+  const throttle = new LoginThrottle();
+
+  app.post('/admin/login', async (request, reply) => {
+    const ip = clientIpFor(context, request);
+    const throttleKey = ip ?? 'unknown';
+    throttle.check(throttleKey);
+
+    const body = parseOrThrow(loginSchema, request.body);
+    if (!verifyPassword(body.password, context.adminPasswordHash)) {
+      throttle.recordFailure(throttleKey);
+      context.auditLogs.record({
+        actor: 'admin',
+        action: 'admin.login.failed',
+        clientIp: maskIp(ip ?? undefined, context.config.logPrivacyMode),
+      });
+      throw ApiError.unauthorized('管理端密码错误');
+    }
+
+    throttle.reset(throttleKey);
+    const session = context.adminSessions.issue(maskIp(ip ?? undefined, context.config.logPrivacyMode));
+    context.auditLogs.record({
+      actor: 'admin',
+      action: 'admin.login.success',
+      clientIp: maskIp(ip ?? undefined, context.config.logPrivacyMode),
+    });
+    reply.code(200);
+    return { token: session.token, expires_at: session.expiresAt };
+  });
+
+  app.post('/admin/logout', { preHandler: adminGuard }, async (request) => {
+    const token = extractBearerToken(request);
+    if (token !== null) {
+      context.adminSessions.revoke(token);
+    }
+    context.auditLogs.record({ actor: 'admin', action: 'admin.logout' });
+    return { ok: true };
+  });
+
+  app.get('/admin/session', { preHandler: adminGuard }, async (request) => {
+    const session = request.adminSession;
+    return {
+      created_at: session?.created_at ?? null,
+      expires_at: session?.expires_at ?? null,
+      public_api_base_url: context.config.publicApiBaseUrl,
+      public_admin_url: context.config.publicAdminUrl,
+    };
+  });
+
+  app.get('/admin/api-keys', { preHandler: adminGuard }, async () => {
+    return { data: context.apiKeys.list() };
+  });
+
+  app.post('/admin/api-keys', { preHandler: adminGuard }, async (request, reply) => {
+    const body = parseOrThrow(createKeySchema, request.body);
+    assertValidWindow(body.starts_at, body.expires_at);
+
+    const created = context.apiKeys.create({
+      name: body.name,
+      startsAt: body.starts_at ?? null,
+      expiresAt: body.expires_at ?? null,
+      rpmLimit: body.rpm_limit ?? null,
+      dailyLimit: body.daily_limit ?? null,
+      maxConcurrency: body.max_concurrency ?? null,
+      allowedEndpoints: body.allowed_endpoints ?? null,
+      allowedModels: body.allowed_models ?? null,
+    });
+
+    context.auditLogs.record({
+      actor: 'admin',
+      action: 'api_key.create',
+      target: created.id,
+      detail: { name: created.name, masked_key: created.masked_key },
+    });
+
+    reply.code(201);
+    // 明文 key 只在此处出现一次，服务端不保存
+    return created;
+  });
+
+  app.patch<{ Params: { id: string } }>(
+    '/admin/api-keys/:id',
+    { preHandler: adminGuard },
+    async (request) => {
+      const body = parseOrThrow(updateKeySchema, request.body);
+      assertValidWindow(body.starts_at, body.expires_at);
+
+      const updated = context.apiKeys.update(request.params.id, {
+        ...(body.name === undefined ? {} : { name: body.name }),
+        ...(body.enabled === undefined ? {} : { enabled: body.enabled }),
+        ...(body.starts_at === undefined ? {} : { startsAt: body.starts_at }),
+        ...(body.expires_at === undefined ? {} : { expiresAt: body.expires_at }),
+        ...(body.rpm_limit === undefined ? {} : { rpmLimit: body.rpm_limit }),
+        ...(body.daily_limit === undefined ? {} : { dailyLimit: body.daily_limit }),
+        ...(body.max_concurrency === undefined ? {} : { maxConcurrency: body.max_concurrency }),
+        ...(body.allowed_endpoints === undefined ? {} : { allowedEndpoints: body.allowed_endpoints }),
+        ...(body.allowed_models === undefined ? {} : { allowedModels: body.allowed_models }),
+      });
+      if (updated === undefined) {
+        throw ApiError.notFound('API Key 不存在');
+      }
+
+      context.auditLogs.record({
+        actor: 'admin',
+        action: 'api_key.update',
+        target: updated.id,
+        detail: { enabled: updated.enabled },
+      });
+      return updated;
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    '/admin/api-keys/:id',
+    { preHandler: adminGuard },
+    async (request) => {
+      const revoked = context.apiKeys.revoke(request.params.id);
+      if (revoked === undefined) {
+        throw ApiError.notFound('API Key 不存在');
+      }
+      context.auditLogs.record({ actor: 'admin', action: 'api_key.revoke', target: revoked.id });
+      return revoked;
+    },
+  );
+
+  app.get<{ Querystring: { limit?: string } }>(
+    '/admin/audit-logs',
+    { preHandler: adminGuard },
+    async (request) => {
+      const raw = Number(request.query.limit ?? '100');
+      const limit = Number.isInteger(raw) && raw > 0 && raw <= 500 ? raw : 100;
+      return { data: context.auditLogs.recent(limit) };
+    },
+  );
+}
