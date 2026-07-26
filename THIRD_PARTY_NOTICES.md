@@ -11,6 +11,18 @@
 | [pdfjs-dist](https://github.com/mozilla/pdf.js) | Apache-2.0 | PDF 文本提取（legacy Node 构建） |
 | [Pino](https://github.com/pinojs/pino) | MIT | 结构化日志 |
 | [Zod](https://github.com/colinhacks/zod) | MIT | 配置与请求体校验 |
+| [Ajv](https://github.com/ajv-validator/ajv) | MIT | 工具调用参数的 JSON Schema 校验 |
+| [ws](https://github.com/websockets/ws) | MIT | 上游 Sydney WebSocket 客户端 |
+| [undici](https://github.com/nodejs/undici) | MIT | OAuth 与上游 HTTP 请求 |
+| [https-proxy-agent](https://github.com/TooTallNate/proxy-agents) | MIT | 出口代理支持 |
+
+## 管理界面依赖
+
+| 组件 | 许可证 | 用途 |
+|---|---|---|
+| [React](https://github.com/facebook/react) | MIT | 管理界面 UI |
+| [React Router](https://github.com/remix-run/react-router) | MIT | 管理界面路由 |
+| [Vite](https://github.com/vitejs/vite) | MIT | 管理界面构建工具（仅构建期） |
 
 ## 开发依赖
 
