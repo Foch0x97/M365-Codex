@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { ApiError, buildErrorBody, REQUEST_ID_HEADER } from '@m365-codex/shared';
 import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import type { AppContext } from './context.js';
+import { registerAccountRoutes } from './routes/accounts.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerHealthRoutes } from './routes/health.js';
 
@@ -34,6 +35,29 @@ export function buildApp(context: AppContext, options: BuildAppOptions = {}): Fa
   // 请求 ID 贯穿响应头与错误体，便于用户报障时定位
   app.addHook('onRequest', async (request, reply) => {
     reply.header(REQUEST_ID_HEADER, request.id);
+  });
+
+  /*
+   * 若干管理端点（登出、生成授权链接、手动触发同步）本来就不需要请求体，
+   * 但不少 HTTP 客户端在 POST 时会自作主张带上 Content-Type——例如 PowerShell 的
+   * Invoke-RestMethod 默认发 application/x-www-form-urlencoded。Fastify 找不到
+   * 对应解析器就会直接回 415，对调用方很莫名其妙。
+   *
+   * 这里兜底：无法识别的 Content-Type 下，空请求体按「没有请求体」处理，
+   * 非空才拒绝，并且用本项目的统一错误体回复。
+   */
+  app.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body: Buffer, done) => {
+    if (body.length === 0) {
+      done(null, undefined);
+      return;
+    }
+    // Fastify 会给解析器抛出的错误补默认 statusCode，这里显式带上 415，
+    // 让它走下面错误处理器的 4xx 分支，输出统一错误体
+    const error = Object.assign(
+      new Error('不支持的 Content-Type，请求体请使用 application/json'),
+      { statusCode: 415 },
+    );
+    done(error, undefined);
   });
 
   app.setErrorHandler<Error & { statusCode?: number }>((error, request, reply) => {
@@ -78,6 +102,7 @@ export function buildApp(context: AppContext, options: BuildAppOptions = {}): Fa
 
   registerHealthRoutes(app, context);
   registerAdminRoutes(app, context);
+  registerAccountRoutes(app, context);
 
   return app;
 }

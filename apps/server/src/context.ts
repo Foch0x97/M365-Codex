@@ -1,15 +1,21 @@
 import type { Logger } from 'pino';
+import { ExternalAccountSync } from './accounts/externalSync.js';
 import type { AppConfig } from './config/index.js';
 import { Cryptor } from './crypto/index.js';
 import { hashPassword } from './crypto/password.js';
 import type { Database } from './db/index.js';
+import { HttpOAuthClient, type OAuthClient } from './oauth/client.js';
+import { OAuthService } from './oauth/service.js';
+import { TokenManager } from './oauth/tokenManager.js';
+import { AccountRepository } from './repo/accounts.js';
 import { AdminSessionRepository } from './repo/adminSessions.js';
 import { ApiKeyRepository } from './repo/apiKeys.js';
 import { AuditLogRepository } from './repo/auditLogs.js';
+import { OAuthSessionRepository } from './repo/oauthSessions.js';
 
 /**
- * 运行时上下文：把配置、数据库、加密器、日志与各数据访问层集中传递，
- * 便于测试时注入内存数据库与静默日志。
+ * 运行时上下文：把配置、数据库、加密器、日志与各服务集中传递，
+ * 便于测试时注入内存数据库、静默日志与模拟上游。
  */
 export interface AppContext {
   readonly config: AppConfig;
@@ -20,6 +26,13 @@ export interface AppContext {
   readonly apiKeys: ApiKeyRepository;
   readonly adminSessions: AdminSessionRepository;
   readonly auditLogs: AuditLogRepository;
+  readonly accounts: AccountRepository;
+  readonly oauthSessions: OAuthSessionRepository;
+  readonly oauthClient: OAuthClient;
+  readonly oauth: OAuthService;
+  readonly tokens: TokenManager;
+  /** 仅在配置了 EXTERNAL_ACCOUNTS_FILE 时创建 */
+  readonly externalSync: ExternalAccountSync | null;
   readonly startedAt: number;
 }
 
@@ -28,19 +41,46 @@ export interface CreateContextOptions {
   db: Database;
   logger: Logger;
   startedAt?: number;
+  /** 注入模拟上游，集成测试用；不传则走真实 HTTP */
+  oauthClient?: OAuthClient;
 }
 
 export function createContext(options: CreateContextOptions): AppContext {
   const { config, db, logger } = options;
+  const cryptor = new Cryptor(config.masterKey, config.masterKeyVersion);
+
+  const accounts = new AccountRepository(db, cryptor);
+  const oauthSessions = new OAuthSessionRepository(db, cryptor);
+  const oauthClient =
+    options.oauthClient ??
+    new HttpOAuthClient({
+      config: config.oauth,
+      proxyUrl: config.httpsProxy ?? config.httpProxy,
+    });
+
   return {
     config,
     db,
-    cryptor: new Cryptor(config.masterKey, config.masterKeyVersion),
+    cryptor,
     logger,
     adminPasswordHash: hashPassword(config.adminPassword),
     apiKeys: new ApiKeyRepository(db),
     adminSessions: new AdminSessionRepository(db),
     auditLogs: new AuditLogRepository(db),
+    accounts,
+    oauthSessions,
+    oauthClient,
+    oauth: new OAuthService({ config: config.oauth, client: oauthClient, sessions: oauthSessions, accounts }),
+    tokens: new TokenManager({ accounts, client: oauthClient, logger }),
+    externalSync:
+      config.externalAccountsFile === null
+        ? null
+        : new ExternalAccountSync({
+            filePath: config.externalAccountsFile,
+            accounts,
+            logger,
+            intervalMs: config.externalAccountsSyncIntervalMs,
+          }),
     startedAt: options.startedAt ?? Date.now(),
   };
 }

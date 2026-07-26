@@ -46,6 +46,36 @@ export const FORBIDDEN_ENV_KEYS: readonly string[] = [
   'BIZCHAT_ACCESS_TOKEN',
 ];
 
+/**
+ * OAuth 上游参数。
+ *
+ * 全部走配置：上游端点会漂移（已观察到 substrate.office.com 与
+ * substrate.svc.cloud.microsoft 两种形态），CLIENT_ID 与 scope 也可能随之调整，
+ * 因此这里只提供默认值，不在业务逻辑里硬编码。
+ */
+export interface OAuthConfig {
+  readonly clientId: string;
+  readonly redirectUri: string;
+  readonly authorizeUrl: string;
+  readonly tokenUrl: string;
+  readonly scopes: readonly string[];
+}
+
+/** 默认值来自公开的 Microsoft 原生客户端 PKCE 流程，均非机密。 */
+export const DEFAULT_OAUTH_CLIENT_ID = 'c0ab8ce9-e9a0-42e7-b064-33d422df41f1';
+export const DEFAULT_OAUTH_REDIRECT_URI =
+  'https://login.microsoftonline.com/common/oauth2/nativeclient';
+export const DEFAULT_OAUTH_AUTHORIZE_URL =
+  'https://login.microsoftonline.com/common/oauth2/v2.0/authorize';
+export const DEFAULT_OAUTH_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
+export const DEFAULT_OAUTH_SCOPES: readonly string[] = [
+  'https://substrate.office.com/sydney/M365Chat.Read',
+  'https://substrate.office.com/sydney/sydney.readwrite',
+  'offline_access',
+  'openid',
+  'profile',
+];
+
 export interface AppConfig {
   readonly port: number;
   readonly dataDir: string;
@@ -61,6 +91,14 @@ export interface AppConfig {
   readonly httpProxy: string | null;
   readonly httpsProxy: string | null;
   readonly noProxy: string | null;
+  readonly oauth: OAuthConfig;
+  /**
+   * 外部账号文件路径（M365 Native 助手写出的 accounts.json）。
+   * 配置后服务会周期性同步其中的 Token，用于账号过期时不中断测试。
+   */
+  readonly externalAccountsFile: string | null;
+  /** 外部账号文件同步间隔，毫秒；0 表示只在启动时同步一次 */
+  readonly externalAccountsSyncIntervalMs: number;
 }
 
 const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
@@ -151,7 +189,29 @@ const envSchema = z.object({
     .optional()
     .transform((value) => (value === undefined || value.trim() === '' ? 1 : Number(value)))
     .refine((value) => Number.isInteger(value) && value >= 1, { message: '必须是 ≥1 的整数' }),
+  OAUTH_CLIENT_ID: optionalTrimmed,
+  OAUTH_REDIRECT_URI: optionalUrl,
+  OAUTH_AUTHORIZE_URL: optionalUrl,
+  OAUTH_TOKEN_URL: optionalUrl,
+  OAUTH_SCOPES: optionalTrimmed,
+  EXTERNAL_ACCOUNTS_FILE: optionalTrimmed,
+  EXTERNAL_ACCOUNTS_SYNC_INTERVAL_MS: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined || value.trim() === '' ? 60_000 : Number(value)))
+    .refine((value) => Number.isInteger(value) && value >= 0, { message: '必须是 ≥0 的整数' })
+    .refine((value) => value === 0 || value >= 5_000, { message: '同步间隔至少 5000 毫秒' }),
 });
+
+/** scope 允许用空格或逗号分隔，兼容两种常见写法。 */
+function parseScopes(raw: string | undefined): readonly string[] {
+  if (raw === undefined) return DEFAULT_OAUTH_SCOPES;
+  const parsed = raw
+    .split(/[\s,]+/)
+    .map((scope) => scope.trim())
+    .filter((scope) => scope !== '');
+  return parsed.length === 0 ? DEFAULT_OAUTH_SCOPES : parsed;
+}
 
 export type RawEnv = Record<string, string | undefined>;
 
@@ -211,6 +271,15 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
     httpProxy: data.HTTP_PROXY ?? null,
     httpsProxy: data.HTTPS_PROXY ?? null,
     noProxy: data.NO_PROXY ?? null,
+    oauth: Object.freeze({
+      clientId: data.OAUTH_CLIENT_ID ?? DEFAULT_OAUTH_CLIENT_ID,
+      redirectUri: data.OAUTH_REDIRECT_URI ?? DEFAULT_OAUTH_REDIRECT_URI,
+      authorizeUrl: data.OAUTH_AUTHORIZE_URL ?? DEFAULT_OAUTH_AUTHORIZE_URL,
+      tokenUrl: data.OAUTH_TOKEN_URL ?? DEFAULT_OAUTH_TOKEN_URL,
+      scopes: Object.freeze(parseScopes(data.OAUTH_SCOPES)),
+    }),
+    externalAccountsFile: data.EXTERNAL_ACCOUNTS_FILE ?? null,
+    externalAccountsSyncIntervalMs: data.EXTERNAL_ACCOUNTS_SYNC_INTERVAL_MS,
   });
 }
 
@@ -229,5 +298,9 @@ export function summarizeConfig(config: AppConfig): Record<string, unknown> {
     logLevel: config.logLevel,
     upstreamWsBaseConfigured: config.upstreamWsBase !== null,
     egressProxyConfigured: config.httpProxy !== null || config.httpsProxy !== null,
+    oauthClientId: config.oauth.clientId,
+    oauthScopeCount: config.oauth.scopes.length,
+    externalAccountsFileConfigured: config.externalAccountsFile !== null,
+    externalAccountsSyncIntervalMs: config.externalAccountsSyncIntervalMs,
   };
 }

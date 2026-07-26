@@ -5,6 +5,7 @@ import { buildApp } from '../../src/app.js';
 import { loadConfig, type AppConfig, type RawEnv } from '../../src/config/index.js';
 import { createContext, type AppContext } from '../../src/context.js';
 import { openDatabase, runMigrations, type Database } from '../../src/db/index.js';
+import { FakeOAuthClient } from './fakeOAuth.js';
 
 /** 测试脚手架：内存数据库 + 静默日志，不落任何文件。 */
 
@@ -29,6 +30,8 @@ export interface TestHarness {
   context: AppContext;
   config: AppConfig;
   db: Database;
+  /** 模拟上游 OAuth 客户端，测试中可编程注入错误与延迟 */
+  oauth: FakeOAuthClient;
   close: () => Promise<void>;
 }
 
@@ -37,7 +40,8 @@ export async function createTestHarness(envOverrides: RawEnv = {}): Promise<Test
   const db = openDatabase(':memory:');
   runMigrations(db);
   const logger = pino({ level: 'silent' });
-  const context = createContext({ config, db, logger });
+  const oauth = new FakeOAuthClient();
+  const context = createContext({ config, db, logger, oauthClient: oauth });
   const app = buildApp(context);
   await app.ready();
 
@@ -46,7 +50,9 @@ export async function createTestHarness(envOverrides: RawEnv = {}): Promise<Test
     context,
     config,
     db,
+    oauth,
     close: async () => {
+      context.externalSync?.stop();
       await app.close();
       db.close();
     },

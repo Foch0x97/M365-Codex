@@ -1,6 +1,6 @@
 {
   "name": "@m365-codex/server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "./dist/server.js",
@@ -17,6 +17,7 @@
     "@m365-codex/shared": "*",
     "fastify": "^5.2.0",
     "pino": "^9.6.0",
+    "undici": "^7.29.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {

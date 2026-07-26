@@ -12,7 +12,57 @@
 
 ### 计划中
 
-- M2：PKCE 授权流程、Token 刷新与轮换、账号状态机
+- M3：Sydney WebSocket 适配器与账号池调度
+
+---
+
+## [0.2.0] - 2026-07-26
+
+里程碑 **M2 · OAuth 与账号健康** 完成，并集成了本地 M365 Native 授权助手。
+
+### 新增
+
+- **PKCE 授权流程**：S256 挑战（不提供 plain 降级）；每次授权生成独立的
+  `code_verifier` / `state` 会话，可为多个账号并行授权互不干扰；`code_verifier`
+  同样以 AES-256-GCM 加密入库；会话 10 分钟过期；授权码通过带
+  `consumed_at IS NULL` 条件的原子 UPDATE 保证只能消费一次，并发重放会被拒绝。
+- **授权交互形态**：沿用 nativeclient 回调页——服务生成授权链接，用户在浏览器登录后
+  把回调地址粘回管理界面。因此本服务**不需要公网可达**，也无需暴露回调端点。
+- **Token 刷新与轮换**：按账号单飞（同账号并发刷新共享同一个任务，避免互相覆盖
+  `refresh_token` 把账号刷坏）；写回是事务化原子替换；上游不下发新
+  `refresh_token` 时保留原值；Token 剩余寿命少于 5 分钟时主动提前刷新。
+- **账号状态机**：`probing` / `online` / `busy` / `cooldown` / `reauth_required` /
+  `disabled` / `unsupported` / `error`，迁移规则收敛在一处，非法迁移抛错而非静默写入；
+  人工停用的账号不会因一次重新授权被悄悄启用。`invalid_grant` 与 `interaction_required`
+  一律转入 `reauth_required` 并停止自动重试。
+- **账号池数据表**：`accounts`（按 `tid + oid` 唯一）、`account_tokens`（access 与
+  refresh 各自独立 nonce，密文以账号 ID 作 AAD 绑定，搬到别的账号行上解不开）、
+  `account_health`、`oauth_sessions`。
+- **集成 M365 Native 授权助手**：新增账号导入器，可读取该助手写出的
+  `accounts.json`——只读源文件、按 `tid + oid` 去重、单条损坏不影响其余账号、
+  返回值与日志中只有计数与脱敏邮箱。
+- **外部账号文件同步**：配置 `EXTERNAL_ACCOUNTS_FILE` 后，服务会按 mtime 变化周期性
+  同步该文件中的 Token。配合在 Docker 中持续刷新 Token 的 M365 Native 容器，
+  账号过期不再中断测试。同步失败只记日志，不拖垮服务。
+- **管理接口**：`/admin/oauth/authorize-url`、`/admin/oauth/callback`、
+  `/admin/accounts`（列表/详情/状态迁移/手动刷新/删除）、`/admin/accounts/import`、
+  `/admin/accounts-sync/status`、`/admin/accounts-sync/run`。所有响应均不含 Token。
+- **OAuth 参数全部可配置**：`OAUTH_CLIENT_ID`、`OAUTH_REDIRECT_URI`、
+  `OAUTH_AUTHORIZE_URL`、`OAUTH_TOKEN_URL`、`OAUTH_SCOPES`。上游端点会漂移，
+  这些一律不硬编码进业务逻辑。HTTP 出口支持 `HTTPS_PROXY` / `HTTP_PROXY`。
+
+### 测试
+
+新增 94 个用例（累计 199 个，16 个文件），全部使用模拟上游，不接触真实网络与真实凭据：
+
+- PKCE 参数生成，含 RFC 7636 附录 B 标准测试向量校验
+- 授权码单次消费、并发重放、state 不匹配、会话过期、多会话并行互不干扰
+- 刷新单飞（8 个并发请求只打一次上游）、原子写回、`refresh_token` 轮换与保留
+- `invalid_grant` 转 `reauth_required` 且不再重试；网络抖动不被误判为需要重新授权
+- 日志纪律：刷新成功与失败的日志中均不出现任何 Token
+- 账号状态机的合法与非法迁移、健康度累计与清零、密文的账号绑定
+- 导入器：去重、身份补齐、损坏条目跳过、源文件逐字节不变、导入结果不含 Token
+- 外部同步：mtime 未变化时跳过、文件损坏时保留已有账号、强制重新导入
 
 ---
 
@@ -41,5 +91,6 @@
 - 计划 §5 列出的其余表（`accounts`、`account_tokens`、`responses` 等）留到各自里程碑的迁移中创建，避免提前产生无人使用的空表。
 - SQLite 采用 Node 24 内置的 `node:sqlite` 而非 `better-sqlite3`，以避免原生模块编译，简化多架构镜像构建。
 
-[未发布]: https://github.com/Foch0x97/M365-Codex/compare/v0.1.0...HEAD
+[未发布]: https://github.com/Foch0x97/M365-Codex/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Foch0x97/M365-Codex/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Foch0x97/M365-Codex/releases/tag/v0.1.0
