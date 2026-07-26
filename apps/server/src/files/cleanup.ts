@@ -49,3 +49,30 @@ export function runFilesCleanup(deps: CleanupDeps, now = Date.now()): CleanupRes
     expiredUploads: cleanupExpiredUploads(deps, now),
   };
 }
+
+export interface CleanupWithBytesResult extends CleanupResult {
+  /** 本次清理释放的文件字节数（供 `POST /admin/files/cleanup` 展示，契约 §2.6） */
+  freedBytes: number;
+}
+
+/**
+ * 供管理端「立即清理」按钮使用：与 `runFilesCleanup` 逻辑一致，
+ * 额外统计释放的字节数（清理前先读一遍即将被删除文件的大小）。
+ */
+export function runFilesCleanupWithBytes(deps: CleanupDeps, now = Date.now()): CleanupWithBytesResult {
+  const expiredFiles = deps.files.findExpired(now);
+  const freedBytes = expiredFiles.reduce((sum, file) => sum + file.bytes, 0);
+  let deletedCount = 0;
+  for (const file of expiredFiles) {
+    const deleted = deps.files.softDelete(file.id, file.api_key_id, now);
+    if (deleted) {
+      deps.storage.deleteFile(file.id);
+      deletedCount += 1;
+    }
+  }
+  return {
+    expiredFiles: deletedCount,
+    expiredUploads: cleanupExpiredUploads(deps, now),
+    freedBytes,
+  };
+}

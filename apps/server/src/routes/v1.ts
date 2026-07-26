@@ -2,6 +2,7 @@ import { ApiError, REQUEST_ID_HEADER } from '@m365-codex/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppContext } from '../context.js';
 import { createApiKeyGuard } from '../gateway/auth.js';
+import { beginIdempotency } from '../gateway/idempotency.js';
 import { loadModels } from '../responses/models.js';
 import { parseResponsesRequest } from '../responses/schema.js';
 import { serializeSse, type SseEvent } from '../responses/types.js';
@@ -22,40 +23,63 @@ export function registerV1Routes(app: FastifyInstance, context: AppContext): voi
     const apiKeyId = request.apiKeyRow?.id ?? null;
     const idempotencyKey = headerValue(request, 'idempotency-key');
 
-    // 客户端断开 → 取消上游
-    const controller = new AbortController();
-    const execution = context.responses.create({
-      request: body,
+    const idem = beginIdempotency({
+      store: context.idempotency,
+      key: idempotencyKey,
       apiKeyId,
-      signal: controller.signal,
-      idempotencyKey,
+      endpoint: 'POST /v1/responses',
+      rawBody: request.body,
+      stream: body.stream === true,
     });
-    context.inFlight.register(execution.responseId, controller);
-
-    // 声明了但执行不了的工具（如 OpenAI 托管的 web_search）不静默丢弃：
-    // 在这里回一个响应头，调用方能立刻看见自己有哪些工具不会生效
-    if (execution.skippedTools.length > 0) {
-      void reply.header('x-m365-codex-skipped-tools', execution.skippedTools.join(','));
+    if (idem.replay !== undefined) {
+      reply.code(idem.replay.statusCode);
+      return idem.replay.body;
     }
 
-    const onClose = (): void => controller.abort();
-    reply.raw.on('close', onClose);
-
     try {
-      if (body.stream) {
-        return await streamResponse(reply, execution.stream);
+      // 客户端断开 → 取消上游
+      const controller = new AbortController();
+      const execution = context.responses.create({
+        request: body,
+        apiKeyId,
+        signal: controller.signal,
+        idempotencyKey,
+      });
+      context.inFlight.register(execution.responseId, controller);
+
+      // 声明了但执行不了的工具（如 OpenAI 托管的 web_search）不静默丢弃：
+      // 在这里回一个响应头，调用方能立刻看见自己有哪些工具不会生效
+      if (execution.skippedTools.length > 0) {
+        void reply.header('x-m365-codex-skipped-tools', execution.skippedTools.join(','));
       }
-      // 非流式：把事件流跑干（驱动上游），再返回最终对象
-      for await (const _event of execution.stream) {
-        void _event;
+
+      const onClose = (): void => controller.abort();
+      reply.raw.on('close', onClose);
+
+      try {
+        if (body.stream) {
+          const streamed = await streamResponse(reply, execution.stream);
+          idem.handle?.complete(0, null, null);
+          return streamed;
+        }
+        // 非流式：把事件流跑干（驱动上游），再返回最终对象
+        for await (const _event of execution.stream) {
+          void _event;
+        }
+        const error = execution.getError();
+        if (error !== null) throw error;
+        reply.code(200);
+        const final = execution.getFinal();
+        idem.handle?.complete(200, final, execution.responseId);
+        return final;
+      } finally {
+        reply.raw.removeListener('close', onClose);
+        context.inFlight.unregister(execution.responseId);
       }
-      const error = execution.getError();
-      if (error !== null) throw error;
-      reply.code(200);
-      return execution.getFinal();
-    } finally {
-      reply.raw.removeListener('close', onClose);
-      context.inFlight.unregister(execution.responseId);
+    } catch (error) {
+      // 首次失败要把幂等键释放掉，否则同键重试会一直撞见 in_progress
+      idem.handle?.release();
+      throw error;
     }
   });
 

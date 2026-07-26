@@ -8,8 +8,9 @@ import type { UpstreamEvent } from '../src/adapter/protocol.js';
  * 重点是「工具 JSON 不得同时作为正文重复输出」。
  */
 
-// parseTool 返回数组（namespace 分组会摊平成多个工具），这里取第一个
-const [weather] = parseTool(
+// parseTool 返回数组（namespace 分组会摊平成多个工具），这里取第一个；
+// 输入是单个 function 声明，必然摊平成恰好一个工具，因此这里断言非空
+const weather = parseTool(
   {
     type: 'function',
     name: 'get_weather',
@@ -17,7 +18,7 @@ const [weather] = parseTool(
     parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
   },
   0,
-);
+)[0]!;
 
 /** 把扫描器吃进的分片结果合并，便于断言。 */
 function scan(chunks: string[]): { text: string; events: UpstreamEvent[] } {

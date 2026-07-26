@@ -48,7 +48,8 @@ export interface UpdateApiKeyInput {
   allowedModels?: string[] | null;
 }
 
-function parseList(value: string | null): string[] | null {
+/** 导出给 `gateway/rateLimit.ts` 复用，避免第二份 JSON 解析逻辑。 */
+export function parseList(value: string | null): string[] | null {
   if (value === null || value === '') return null;
   try {
     const parsed: unknown = JSON.parse(value);

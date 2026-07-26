@@ -151,6 +151,9 @@ wire_api = "responses"           # 只支持 responses，chat 已于 2026-02 移
 | `FILES_*` | 否 | 单文件/单请求大小上限、单 Key 累计存储上限、文件保留期、未完成 Upload 存活时间 |
 | `UPSTREAM_IMAGE_INPUT` | 否 | 上游是否真支持图片输入，默认 `false`（`input_image` 返回明确错误，不假装支持） |
 | `CONTEXT_MAX_CHARS` | 否 | 重建的对话上下文超过多少字符就从最旧历史开始截断，默认给一个宽松值 |
+| `RATE_LIMIT_GLOBAL_*` | 否 | API Key 级限额（RPM/日配额/最大并发）的全局天花板；单个 Key 只能比这更严 |
+| `CLEANUP_*` | 否 | 定时清理的运行间隔与 Response/审计日志/幂等记录的保留期 |
+| `PROXY_CHECK_TIMEOUT_MS` | 否 | 出口代理健康检查超时，默认 `5000` |
 
 **严禁**通过环境变量注入任何 Microsoft Token 或 OAuth 凭据。服务启动时会检测常见的注入变量名并拒绝启动；这些凭据只能经 PKCE 授权流程获取，并以 AES-256-GCM 加密入库。
 

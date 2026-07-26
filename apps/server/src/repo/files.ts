@@ -135,6 +135,38 @@ export class FileRepository {
         .all(now),
     );
   }
+
+  /** 管理视角的文件列表（契约 §2.6），可选按 API Key 过滤，跨 Key 可见。 */
+  listForAdmin(filters: { limit: number; apiKeyId?: string }): { items: FileRow[]; totalBytes: number } {
+    if (filters.apiKeyId !== undefined) {
+      const items = asRows<FileRow>(
+        this.#db
+          .prepare(
+            'SELECT * FROM files WHERE api_key_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ?',
+          )
+          .all(filters.apiKeyId, filters.limit),
+      );
+      const totalBytes = this.sumActiveBytes(filters.apiKeyId);
+      return { items, totalBytes };
+    }
+    const items = asRows<FileRow>(
+      this.#db.prepare('SELECT * FROM files WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?').all(
+        filters.limit,
+      ),
+    );
+    const totalRow = asRow<{ total: number | null }>(
+      this.#db.prepare('SELECT SUM(bytes) AS total FROM files WHERE deleted_at IS NULL').get(),
+    );
+    return { items, totalBytes: totalRow?.total ?? 0 };
+  }
+
+  /** 管理端删除：跳过归属校验（契约 §2.6 `DELETE /admin/files/:id`）。 */
+  adminSoftDelete(id: string, now = Date.now()): FileRow | undefined {
+    const existing = this.findById(id);
+    if (existing === undefined || existing.deleted_at !== null) return undefined;
+    this.#db.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').run(now, id);
+    return this.findById(id);
+  }
 }
 
 export interface UploadRow {

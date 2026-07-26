@@ -1,5 +1,5 @@
 import type { ResponseStatus } from '@m365-codex/shared';
-import { asRow, type Database } from '../db/index.js';
+import { asRow, asRows, type Database } from '../db/index.js';
 import type { ResponseObject } from '../responses/types.js';
 
 /** Responses 持久化：请求记录 + 会话粘性绑定。 */
@@ -89,11 +89,17 @@ export class ResponseRepository {
     return asRow<ResponseRow>(this.#db.prepare('SELECT * FROM responses WHERE id = ?').get(id));
   }
 
-  /** 找出某 API Key 下用过某幂等键的记录（M7 幂等的基础，M4 先建接口）。 */
+  /**
+   * 找出某 API Key 下最近一次用过某幂等键的记录（仅供审计/回溯查看，
+   * 唯一性保证已经收敛到 `idempotency_keys` 表，这里的 key 不再是唯一的，
+   * 流式请求 release 后同一把键可能对应多个历史记录，取最近一条）。
+   */
   findByIdempotencyKey(apiKeyId: string, key: string): ResponseRow | undefined {
     return asRow<ResponseRow>(
       this.#db
-        .prepare('SELECT * FROM responses WHERE api_key_id = ? AND idempotency_key = ?')
+        .prepare(
+          'SELECT * FROM responses WHERE api_key_id = ? AND idempotency_key = ? ORDER BY created_at DESC LIMIT 1',
+        )
         .get(apiKeyId, key),
     );
   }
@@ -158,5 +164,83 @@ export class ResponseRepository {
     return asRow<ConversationBindingRow>(
       this.#db.prepare('SELECT * FROM conversation_bindings WHERE response_id = ?').get(responseId),
     );
+  }
+
+  /** 按状态找出全部记录（重启恢复用，§18）。 */
+  listByStatus(status: ResponseStatus): ResponseRow[] {
+    return asRows<ResponseRow>(this.#db.prepare('SELECT * FROM responses WHERE status = ?').all(status));
+  }
+
+  /** 管理端请求记录列表（契约 §2.2），按创建时间倒序，可选按状态/API Key 过滤。 */
+  listForAdmin(filters: { limit: number; status?: string; apiKeyId?: string }): { items: ResponseRow[]; total: number } {
+    const conditions: string[] = [];
+    const params: (string | number)[] = [];
+    if (filters.status !== undefined) {
+      conditions.push('status = ?');
+      params.push(filters.status);
+    }
+    if (filters.apiKeyId !== undefined) {
+      conditions.push('api_key_id = ?');
+      params.push(filters.apiKeyId);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const totalRow = asRow<{ count: number }>(
+      this.#db.prepare(`SELECT COUNT(*) AS count FROM responses ${where}`).get(...params),
+    );
+    const items = asRows<ResponseRow>(
+      this.#db
+        .prepare(`SELECT * FROM responses ${where} ORDER BY created_at DESC LIMIT ?`)
+        .all(...params, filters.limit),
+    );
+    return { items, total: totalRow?.count ?? 0 };
+  }
+
+  /** 某时间点之后创建的请求数（供 /admin/overview 的 requests.last_hour）。 */
+  countCreatedSince(sinceMs: number): number {
+    const row = asRow<{ count: number }>(
+      this.#db.prepare('SELECT COUNT(*) AS count FROM responses WHERE created_at >= ?').get(sinceMs),
+    );
+    return row?.count ?? 0;
+  }
+
+  /** 某时间点之后失败的请求数（供 /admin/overview 的 requests.failed_last_hour）。 */
+  countFailedSince(sinceMs: number): number {
+    const row = asRow<{ count: number }>(
+      this.#db
+        .prepare("SELECT COUNT(*) AS count FROM responses WHERE status = 'failed' AND updated_at >= ?")
+        .get(sinceMs),
+    );
+    return row?.count ?? 0;
+  }
+
+  /**
+   * 清理已结束（completed/failed/cancelled/incomplete）且早于 cutoff 的记录
+   * （对应实施计划 §18 定时清理）。级联删除 `tool_calls`（`ON DELETE CASCADE`）
+   * 与 `conversation_bindings`（同上），因此不需要单独再清一次。
+   */
+  purgeFinishedOlderThan(cutoff: number): number {
+    const result = this.#db
+      .prepare(
+        `DELETE FROM responses
+         WHERE status IN ('completed', 'failed', 'cancelled', 'incomplete') AND updated_at < ?`,
+      )
+      .run(cutoff);
+    return Number(result.changes);
+  }
+
+  /**
+   * 清理指向已被删除账号的会话绑定（失效会话绑定，§18）。
+   * `account_id` 没有 `ON DELETE` 动作，账号被删后绑定会变成悬空引用。
+   */
+  purgeStaleBindings(): number {
+    const result = this.#db
+      .prepare(
+        `DELETE FROM conversation_bindings
+         WHERE account_id IS NOT NULL
+           AND account_id NOT IN (SELECT id FROM accounts)`,
+      )
+      .run();
+    return Number(result.changes);
   }
 }

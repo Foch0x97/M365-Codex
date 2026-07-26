@@ -53,4 +53,10 @@ export class AuditLogRepository {
       this.#db.prepare('SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT ?').all(limit),
     );
   }
+
+  /** 清理早于 cutoff 的审计日志（对应实施计划 §18 定时清理）。 */
+  purgeOlderThan(cutoff: number): number {
+    const result = this.#db.prepare('DELETE FROM audit_logs WHERE created_at < ?').run(cutoff);
+    return Number(result.changes);
+  }
 }

@@ -46,7 +46,11 @@ export class OAuthRequestError extends Error {
 export interface OAuthClient {
   buildAuthorizeUrl(params: { state: string; codeChallenge: string }): string;
   exchangeCode(params: { code: string; codeVerifier: string }): Promise<TokenResponse>;
-  refresh(params: { refreshToken: string }): Promise<TokenResponse>;
+  /**
+   * `proxyUrl` 可选：按账号解析出的出口代理（对应实施计划 §13.1「OAuth 与
+   * Copilot 分别配置代理」）。不传则使用客户端构造时的全局默认代理。
+   */
+  refresh(params: { refreshToken: string; proxyUrl?: string | null }): Promise<TokenResponse>;
 }
 
 export interface HttpOAuthClientOptions {
@@ -64,10 +68,7 @@ export class HttpOAuthClient implements OAuthClient {
   constructor(options: HttpOAuthClientOptions) {
     this.#config = options.config;
     this.#timeoutMs = options.timeoutMs ?? 30_000;
-    this.#dispatcher =
-      options.proxyUrl == null || options.proxyUrl === ''
-        ? undefined
-        : new ProxyAgent(options.proxyUrl);
+    this.#dispatcher = toDispatcher(options.proxyUrl);
   }
 
   buildAuthorizeUrl(params: { state: string; codeChallenge: string }): string {
@@ -96,17 +97,22 @@ export class HttpOAuthClient implements OAuthClient {
     });
   }
 
-  async refresh(params: { refreshToken: string }): Promise<TokenResponse> {
-    return this.#postToken({
-      client_id: this.#config.clientId,
-      grant_type: 'refresh_token',
-      refresh_token: params.refreshToken,
-      scope: this.#config.scopes.join(' '),
-    });
+  async refresh(params: { refreshToken: string; proxyUrl?: string | null }): Promise<TokenResponse> {
+    return this.#postToken(
+      {
+        client_id: this.#config.clientId,
+        grant_type: 'refresh_token',
+        refresh_token: params.refreshToken,
+        scope: this.#config.scopes.join(' '),
+      },
+      params.proxyUrl,
+    );
   }
 
-  async #postToken(form: Record<string, string>): Promise<TokenResponse> {
+  async #postToken(form: Record<string, string>, proxyUrlOverride?: string | null): Promise<TokenResponse> {
     const body = new URLSearchParams(form).toString();
+    // 账号绑定了专属代理时，逐次调用临时切换 dispatcher；否则用构造时的全局默认值
+    const dispatcher = proxyUrlOverride === undefined ? this.#dispatcher : toDispatcher(proxyUrlOverride);
     const response = await request(this.#config.tokenUrl, {
       method: 'POST',
       headers: {
@@ -116,7 +122,7 @@ export class HttpOAuthClient implements OAuthClient {
       body,
       headersTimeout: this.#timeoutMs,
       bodyTimeout: this.#timeoutMs,
-      ...(this.#dispatcher === undefined ? {} : { dispatcher: this.#dispatcher }),
+      ...(dispatcher === undefined ? {} : { dispatcher }),
     });
 
     const text = await response.body.text();
@@ -136,6 +142,11 @@ export class HttpOAuthClient implements OAuthClient {
     }
     return tokens;
   }
+}
+
+/** 代理 URL 为空/未设置时不建 dispatcher，走 undici 默认（直连）。 */
+function toDispatcher(proxyUrl?: string | null): Dispatcher | undefined {
+  return proxyUrl == null || proxyUrl === '' ? undefined : new ProxyAgent(proxyUrl);
 }
 
 /**

@@ -67,6 +67,11 @@ export interface DispatcherDeps {
   tokens: TokenManager;
   logger: Logger;
   proxyUrl?: string | null;
+  /**
+   * 按账号解析出口代理（对应实施计划 §13.1「账号绑定代理后保持出口粘性」）。
+   * 返回 null 表示该账号未绑定代理或绑定的节点已停用，回退到 `proxyUrl` 全局默认值。
+   */
+  resolveProxyForAccount?: (accountId: string) => string | null;
   /** 注入连接实现，测试用 */
   connectionFactory?: (deps: ConnectionDeps) => SydneyConnection;
   /** 单次请求最多尝试多少个账号（含重试），默认 4 */
@@ -164,11 +169,13 @@ export class UpstreamDispatcher {
           accessToken,
         });
 
+        // 账号绑定的出口优先：同一账号的长连接固定走同一个代理，避免频繁切换网络出口
+        const proxyUrl = this.#deps.resolveProxyForAccount?.(account.id) ?? this.#deps.proxyUrl ?? null;
         const connection = (this.#deps.connectionFactory ?? defaultConnectionFactory)({
           config: this.#deps.config,
           codec: this.#deps.codec,
           logger,
-          proxyUrl: this.#deps.proxyUrl,
+          proxyUrl,
         });
 
         const invocationId = randomUUID();

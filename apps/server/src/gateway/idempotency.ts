@@ -160,3 +160,64 @@ export class IdempotencyStore {
     );
   }
 }
+
+/** 执行完成后调用其一：非流式落库可回放结果、流式/失败释放这把键。 */
+export interface IdempotencyHandle {
+  complete: (statusCode: number, body: unknown, responseId: string | null) => void;
+  release: () => void;
+}
+
+export interface IdempotencyGuardResult {
+  /** 命中回放：直接把这个发给客户端，不必再跑一次业务逻辑 */
+  replay?: { statusCode: number; body: unknown };
+  /** 首次执行：业务逻辑跑完后调用 handle.complete()（成功）或 handle.release()（失败） */
+  handle?: IdempotencyHandle;
+}
+
+/**
+ * 接进 `POST /v1/responses` 与 `POST /v1/chat/completions` 的统一入口
+ * （对应实施计划 §18）。没带 `Idempotency-Key` 时直接放行（`{}`）。
+ *
+ * 流式（`stream:true`）请求**不做回放**：SSE 是一次性推给客户端的事件流，
+ * 连接关闭后没有办法把已经吐出去的内容重新放一遍；但仍然要挡住并发同键——
+ * 这一点由 `store.begin()` 的 `inProgress` 分支保证，与是否流式无关。
+ * 因此流式请求执行完（无论成功失败）一律 `release()` 这把键，而不是 `complete()`：
+ * 键被清空后，后续同键请求会被当成全新的一次执行，而不是收到一份陈旧的回放结果。
+ */
+export function beginIdempotency(input: {
+  store: IdempotencyStore;
+  key: string | null;
+  apiKeyId: string | null;
+  endpoint: string;
+  rawBody: unknown;
+  stream: boolean;
+}): IdempotencyGuardResult {
+  if (input.key === null || input.apiKeyId === null) return {};
+  const key = input.key;
+  const apiKeyId = input.apiKeyId;
+  const fingerprint = fingerprintRequest(input.rawBody);
+
+  const begin = input.store.begin({ key, apiKeyId, endpoint: input.endpoint, fingerprint });
+  if (begin.replay !== undefined) {
+    return { replay: { statusCode: begin.replay.statusCode, body: begin.replay.body } };
+  }
+  if (begin.inProgress === true) {
+    throw new ApiError({
+      type: 'idempotency_error',
+      status: 409,
+      message: '同一个 Idempotency-Key 的请求正在处理中，请稍候或换一个 Idempotency-Key 重试',
+    });
+  }
+
+  const release = (): void => input.store.release(key, apiKeyId, input.endpoint);
+  if (input.stream) {
+    return { handle: { complete: release, release } };
+  }
+  return {
+    handle: {
+      complete: (statusCode, body, responseId) =>
+        input.store.complete({ key, apiKeyId, endpoint: input.endpoint, statusCode, body, responseId }),
+      release,
+    },
+  };
+}

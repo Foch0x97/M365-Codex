@@ -2,6 +2,7 @@ import { REQUEST_ID_HEADER } from '@m365-codex/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppContext } from '../context.js';
 import { createApiKeyGuard } from '../gateway/auth.js';
+import { beginIdempotency } from '../gateway/idempotency.js';
 import {
   ChatStreamTranslator,
   chatRequestToResponsesPayload,
@@ -28,34 +29,56 @@ export function registerChatRoutes(app: FastifyInstance, context: AppContext): v
     const apiKeyId = request.apiKeyRow?.id ?? null;
     const idempotencyKey = headerValue(request, 'idempotency-key');
 
-    // 客户端断开 → 取消上游（与 /v1/responses 共用同一套取消机制）
-    const controller = new AbortController();
-    const execution = context.responses.create({
-      request: responsesRequest,
+    const idem = beginIdempotency({
+      store: context.idempotency,
+      key: idempotencyKey,
       apiKeyId,
-      signal: controller.signal,
-      idempotencyKey,
+      endpoint: 'POST /v1/chat/completions',
+      rawBody: request.body,
+      stream: chat.stream === true,
     });
-    context.inFlight.register(execution.responseId, controller);
-
-    const onClose = (): void => controller.abort();
-    reply.raw.on('close', onClose);
+    if (idem.replay !== undefined) {
+      reply.code(idem.replay.statusCode);
+      return idem.replay.body;
+    }
 
     try {
-      if (chat.stream) {
-        return await streamChatCompletion(reply, execution.stream, execution.responseId, chat.model);
+      // 客户端断开 → 取消上游（与 /v1/responses 共用同一套取消机制）
+      const controller = new AbortController();
+      const execution = context.responses.create({
+        request: responsesRequest,
+        apiKeyId,
+        signal: controller.signal,
+        idempotencyKey,
+      });
+      context.inFlight.register(execution.responseId, controller);
+
+      const onClose = (): void => controller.abort();
+      reply.raw.on('close', onClose);
+
+      try {
+        if (chat.stream) {
+          const streamed = await streamChatCompletion(reply, execution.stream, execution.responseId, chat.model);
+          idem.handle?.complete(0, null, null);
+          return streamed;
+        }
+        // 非流式：把事件流跑干（驱动上游），再把最终 Response 对象转成 chat.completion
+        for await (const _event of execution.stream) {
+          void _event;
+        }
+        const error = execution.getError();
+        if (error !== null) throw error;
+        reply.code(200);
+        const final = responseToChatCompletion(execution.getFinal());
+        idem.handle?.complete(200, final, execution.responseId);
+        return final;
+      } finally {
+        reply.raw.removeListener('close', onClose);
+        context.inFlight.unregister(execution.responseId);
       }
-      // 非流式：把事件流跑干（驱动上游），再把最终 Response 对象转成 chat.completion
-      for await (const _event of execution.stream) {
-        void _event;
-      }
-      const error = execution.getError();
-      if (error !== null) throw error;
-      reply.code(200);
-      return responseToChatCompletion(execution.getFinal());
-    } finally {
-      reply.raw.removeListener('close', onClose);
-      context.inFlight.unregister(execution.responseId);
+    } catch (error) {
+      idem.handle?.release();
+      throw error;
     }
   });
 }

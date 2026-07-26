@@ -25,6 +25,7 @@
     "/v1/responses": {
       "post": {
         "summary": "创建一次 Response（非流式或 SSE 流式）",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
         "requestBody": {
           "required": true,
           "content": {
@@ -33,13 +34,15 @@
         },
         "responses": {
           "200": {
-            "description": "非流式返回 Response 对象；stream=true 时为 text/event-stream",
+            "description": "非流式返回 Response 对象（含 Idempotency-Key 回放）；stream=true 时为 text/event-stream（不回放，仅挡并发同键）",
             "content": {
               "application/json": { "schema": { "$ref": "#/components/schemas/Response" } },
               "text/event-stream": { "schema": { "type": "string" } }
             }
           },
+          "409": { "$ref": "#/components/responses/Error" },
           "422": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
           "502": { "$ref": "#/components/responses/Error" },
           "503": { "$ref": "#/components/responses/Error" }
         }
@@ -85,6 +88,7 @@
     "/v1/chat/completions": {
       "post": {
         "summary": "Chat Completions 兼容入口（复用 Responses 内核，不建第二套推理逻辑）",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
         "requestBody": {
           "required": true,
           "content": {
@@ -93,13 +97,15 @@
         },
         "responses": {
           "200": {
-            "description": "非流式返回 chat.completion；stream=true 时为 text/event-stream 的 chat.completion.chunk",
+            "description": "非流式返回 chat.completion（含 Idempotency-Key 回放）；stream=true 时为 text/event-stream 的 chat.completion.chunk（不回放，仅挡并发同键）",
             "content": {
               "application/json": { "schema": { "$ref": "#/components/schemas/ChatCompletionResponse" } },
               "text/event-stream": { "schema": { "type": "string" } }
             }
           },
+          "409": { "$ref": "#/components/responses/Error" },
           "422": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
           "502": { "$ref": "#/components/responses/Error" },
           "503": { "$ref": "#/components/responses/Error" }
         }
@@ -299,6 +305,15 @@
         "content": {
           "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } }
         }
+      }
+    },
+    "parameters": {
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "schema": { "type": "string" },
+        "description": "同一 API Key + 端点 + 该键返回同一创建结果（§18）。stream=true 时不回放（SSE 无法重放），但仍会挡住并发同键请求（返回 409）。同一把键配不同请求体返回 409。"
       }
     },
     "schemas": {

@@ -260,6 +260,92 @@ CREATE TABLE idempotency_keys (
 CREATE INDEX idx_idempotency_created_at ON idempotency_keys (created_at);
 `;
 
+const M007_PROXY_NODES = `
+-- 出口代理池（对应实施计划 §13.1、§M7）。
+-- url 含账号密码，属于凭据，与 Token 同规格 AES-256-GCM 加密存储；
+-- 列表接口只返回打码后的 url_masked（见 repo/proxyNodes.ts），明文永不出网关。
+CREATE TABLE proxy_nodes (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  url_enc        BLOB NOT NULL,
+  url_nonce      BLOB NOT NULL,
+  key_version    INTEGER NOT NULL,
+  protocol       TEXT NOT NULL,
+  weight         INTEGER NOT NULL DEFAULT 1,
+  priority       INTEGER NOT NULL DEFAULT 0,
+  enabled        INTEGER NOT NULL DEFAULT 1,
+  status         TEXT NOT NULL DEFAULT 'unknown',
+  latency_ms     INTEGER,
+  last_check_at  INTEGER,
+  failure_count  INTEGER NOT NULL DEFAULT 0,
+  cooldown_until INTEGER,
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL
+);
+CREATE INDEX idx_proxy_nodes_enabled ON proxy_nodes (enabled);
+`;
+
+const M008_RESPONSES_DROP_IDEMPOTENCY_UNIQUE = `
+-- 放宽 responses 表的唯一约束（对应实施计划 §18 幂等改造）。
+-- M003 建表时把 UNIQUE (api_key_id, idempotency_key) 直接放在 responses 表上，
+-- 当时是"完整语义在 M7"之前的占位约束；现在完整的幂等保证已经收敛到独立的
+-- idempotency_keys 表（begin/complete/release，作用域含 endpoint；流式请求
+-- 执行完会 release 这把键，允许同键之后重新执行）。这条表级约束反而会跟
+-- "同键释放后重新执行"冲突——第二次 INSERT 一个新的 response 行时撞见旧约束报错。
+-- 因此这里重建表去掉该约束：idempotency_key 列继续保留供审计/回溯，
+-- 不再承担唯一性职责；SQLite 不支持 DROP CONSTRAINT，只能整表重建。
+--
+-- 陷阱：SQLite 的 DROP TABLE 内部等价于逐行 DELETE 再移除表定义，PRAGMA
+-- foreign_keys=ON 时会对每一行触发外键的 ON DELETE 动作——也就是说 DROP TABLE
+-- responses 会把 tool_calls、conversation_bindings 里引用这些行的记录级联删空！
+-- 因此先把这两张表的数据原样快照出来，重建完 responses 后再插回去。
+CREATE TABLE _tool_calls_backup_v8 AS SELECT * FROM tool_calls;
+CREATE TABLE _conversation_bindings_backup_v8 AS SELECT * FROM conversation_bindings;
+
+CREATE TABLE responses_v8 (
+  id                         TEXT PRIMARY KEY,
+  api_key_id                 TEXT REFERENCES api_keys (id),
+  account_id                 TEXT REFERENCES accounts (id),
+  status                     TEXT NOT NULL,
+  requested_model            TEXT,
+  requested_reasoning_effort TEXT,
+  upstream_model_parameter   TEXT,
+  reported_upstream_model    TEXT,
+  previous_response_id       TEXT,
+  idempotency_key            TEXT,
+  body                       TEXT,
+  error_message              TEXT,
+  tool_round                 INTEGER NOT NULL DEFAULT 0,
+  tool_calls_total           INTEGER NOT NULL DEFAULT 0,
+  created_at                 INTEGER NOT NULL,
+  updated_at                 INTEGER NOT NULL
+);
+INSERT INTO responses_v8 (
+  id, api_key_id, account_id, status, requested_model, requested_reasoning_effort,
+  upstream_model_parameter, reported_upstream_model, previous_response_id, idempotency_key,
+  body, error_message, tool_round, tool_calls_total, created_at, updated_at
+)
+SELECT
+  id, api_key_id, account_id, status, requested_model, requested_reasoning_effort,
+  upstream_model_parameter, reported_upstream_model, previous_response_id, idempotency_key,
+  body, error_message, tool_round, tool_calls_total, created_at, updated_at
+FROM responses;
+DROP TABLE responses;
+ALTER TABLE responses_v8 RENAME TO responses;
+CREATE INDEX idx_responses_api_key ON responses (api_key_id);
+CREATE INDEX idx_responses_status ON responses (status);
+CREATE INDEX idx_responses_idempotency_lookup ON responses (api_key_id, idempotency_key);
+
+-- responses 已经用新表恢复出来，把级联清空的子表数据插回去
+DELETE FROM tool_calls;
+INSERT INTO tool_calls SELECT * FROM _tool_calls_backup_v8;
+DELETE FROM conversation_bindings;
+INSERT INTO conversation_bindings SELECT * FROM _conversation_bindings_backup_v8;
+
+DROP TABLE _tool_calls_backup_v8;
+DROP TABLE _conversation_bindings_backup_v8;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'core_settings_apikeys_admin_audit', sql: M001_CORE },
   { version: 2, name: 'accounts_tokens_health_oauth_sessions', sql: M002_ACCOUNTS },
@@ -267,6 +353,8 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 4, name: 'tool_calls', sql: M004_TOOL_CALLS },
   { version: 5, name: 'files_uploads', sql: M005_FILES_UPLOADS },
   { version: 6, name: 'idempotency_keys', sql: M006_IDEMPOTENCY },
+  { version: 7, name: 'proxy_nodes', sql: M007_PROXY_NODES },
+  { version: 8, name: 'responses_drop_idempotency_unique', sql: M008_RESPONSES_DROP_IDEMPOTENCY_UNIQUE },
 ];
 
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(

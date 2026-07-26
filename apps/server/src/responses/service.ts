@@ -5,6 +5,7 @@ import type { Logger } from 'pino';
 import type { ToolsConfig } from '../config/index.js';
 import type { UpstreamEvent } from '../adapter/protocol.js';
 import type { DispatchRequest, UpstreamDispatcher } from '../scheduler/dispatcher.js';
+import type { Metrics } from '../observability/metrics.js';
 import type { ResponseRepository } from '../repo/responses.js';
 import type { ToolCallRepository } from '../repo/toolCalls.js';
 import type { FilesService } from '../files/service.js';
@@ -65,6 +66,8 @@ export interface ResponsesServiceDeps {
   upstreamImageInput?: boolean;
   /** M6 新增：重建出的上下文文本超过多少字符就从最旧历史开始截断 */
   contextMaxChars?: number;
+  /** M7 新增：在关键路径打点，供 /admin/overview 与未来 M8 的 /metrics 使用 */
+  metrics?: Metrics;
 }
 
 /** 缓冲中的工具调用（按 call_id 累积参数）。 */
@@ -297,6 +300,16 @@ export class ResponsesService {
             { response_id: responseId, issues: verdict.soft.length },
             '工具参数不符合 schema，修复额度用尽后如实发出',
           );
+        }
+
+        // 打点供 /admin/overview 的 tools.calls_last_hour / arg_pass_rate 使用：
+        // rejected 是本轮被判定不合规、绝不下发给客户端的调用数；emitted 是实际下发数。
+        if (verdict.rejected.size > 0) {
+          this.#deps.metrics?.toolArgValidations.inc({ result: 'rejected' }, verdict.rejected.size);
+        }
+        if (emitted.length > 0) {
+          this.#deps.metrics?.toolCalls.inc({}, emitted.length);
+          this.#deps.metrics?.toolArgValidations.inc({ result: 'pass' }, emitted.length);
         }
 
         for (const tc of emitted) {

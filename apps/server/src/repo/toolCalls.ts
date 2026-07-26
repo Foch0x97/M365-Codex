@@ -105,6 +105,14 @@ export class ToolCallRepository {
     return Number(result.changes) > 0;
   }
 
+  /** 某时间点之后发出的工具调用数（供 /admin/overview 的 tools.calls_last_hour）。 */
+  countCreatedSince(sinceMs: number): number {
+    const row = asRow<{ count: number }>(
+      this.#db.prepare('SELECT COUNT(*) AS count FROM tool_calls WHERE created_at >= ?').get(sinceMs),
+    );
+    return row?.count ?? 0;
+  }
+
   /** 是否存在未完成（emitted）的工具调用。 */
   hasPending(responseId: string): boolean {
     const row = asRow<{ count: number }>(

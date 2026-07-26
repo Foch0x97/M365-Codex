@@ -54,6 +54,8 @@ export interface AccountView {
   display_name: string | null;
   status: AccountStatus;
   source: string;
+  /** 绑定的出口代理节点 ID（契约 §2.4），未绑定为 null */
+  proxy_node_id: string | null;
   created_at: number;
   updated_at: number;
   token_expires_at: number | null;
@@ -289,6 +291,7 @@ export class AccountRepository {
       display_name: account.display_name,
       status: account.status,
       source: account.source,
+      proxy_node_id: account.proxy_node_id,
       created_at: account.created_at,
       updated_at: account.updated_at,
       token_expires_at: tokens?.expires_at ?? null,
@@ -355,6 +358,14 @@ export class AccountRepository {
          WHERE account_id = ?`,
       )
       .run(now, errorType, options.cooldownUntil ?? null, now, accountId);
+  }
+
+  /** 绑定/解绑出口代理（契约 §2.4 `POST /admin/accounts/:id/proxy`）；传 null 解绑。 */
+  setProxyNode(accountId: string, proxyNodeId: string | null, now = Date.now()): AccountView | undefined {
+    this.#db
+      .prepare('UPDATE accounts SET proxy_node_id = ?, updated_at = ? WHERE id = ?')
+      .run(proxyNodeId, now, accountId);
+    return this.getView(accountId);
   }
 
   remove(accountId: string): boolean {

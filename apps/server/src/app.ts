@@ -5,6 +5,7 @@ import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance } 
 import type { AppContext } from './context.js';
 import { registerAccountRoutes } from './routes/accounts.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerAdminOpsRoutes } from './routes/adminOps.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerHealthRoutes } from './routes/health.js';
@@ -115,6 +116,7 @@ export function buildApp(context: AppContext, options: BuildAppOptions = {}): Fa
 
   registerHealthRoutes(app, context);
   registerAdminRoutes(app, context);
+  registerAdminOpsRoutes(app, context);
   registerAccountRoutes(app, context);
   registerV1Routes(app, context);
   registerFileRoutes(app, context);

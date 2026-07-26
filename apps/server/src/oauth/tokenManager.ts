@@ -35,6 +35,8 @@ export interface TokenManagerDeps {
   client: OAuthClient;
   logger: Logger;
   skewMs?: number;
+  /** 按账号解析出口代理，绑定后 Token 刷新走同一个出口（对应实施计划 §13.1）。 */
+  resolveProxyForAccount?: (accountId: string) => string | null;
 }
 
 export class TokenManager {
@@ -42,6 +44,7 @@ export class TokenManager {
   readonly #client: OAuthClient;
   readonly #logger: Logger;
   readonly #skewMs: number;
+  readonly #resolveProxyForAccount: ((accountId: string) => string | null) | undefined;
   /** accountId → 进行中的刷新任务，保证同账号单飞 */
   readonly #inFlight = new Map<string, Promise<string>>();
 
@@ -50,6 +53,7 @@ export class TokenManager {
     this.#client = deps.client;
     this.#logger = deps.logger;
     this.#skewMs = deps.skewMs ?? REFRESH_SKEW_MS;
+    this.#resolveProxyForAccount = deps.resolveProxyForAccount;
   }
 
   /** 取一个当前可用的 access token，必要时先刷新。 */
@@ -107,7 +111,8 @@ export class TokenManager {
     }
 
     try {
-      const tokens = await this.#client.refresh({ refreshToken });
+      const proxyUrl = this.#resolveProxyForAccount?.(accountId) ?? undefined;
+      const tokens = await this.#client.refresh({ refreshToken, proxyUrl });
       this.#accounts.replaceTokens(
         accountId,
         {

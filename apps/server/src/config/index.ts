@@ -198,6 +198,8 @@ export interface AppConfig {
   readonly files: FilesConfig;
   readonly rateLimit: RateLimitConfig;
   readonly cleanup: CleanupConfig;
+  /** 出口代理健康检查超时（毫秒，契约 §2.4 `POST /admin/proxies/:id/check`） */
+  readonly proxyCheckTimeoutMs: number;
   /**
    * 启动时原始环境变量里显式出现过的键名（非空值）。
    * `/admin/settings` 据此判断某项是否 `source: "env"`——容器编排是唯一真源，
@@ -356,6 +358,7 @@ const envSchema = z.object({
   CLEANUP_RESPONSE_RETENTION_MS: positiveIntFromEnv(7 * 24 * 60 * 60 * 1000, 60_000),
   CLEANUP_AUDIT_LOG_RETENTION_MS: positiveIntFromEnv(90 * 24 * 60 * 60 * 1000, 60_000),
   CLEANUP_IDEMPOTENCY_RETENTION_MS: positiveIntFromEnv(24 * 60 * 60 * 1000, 60_000),
+  PROXY_CHECK_TIMEOUT_MS: positiveIntFromEnv(5_000, 500),
 });
 
 /** 生成一个「可选正整数、带默认值与下限」的 env 解析器。 */
@@ -484,6 +487,7 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
       auditLogRetentionMs: data.CLEANUP_AUDIT_LOG_RETENTION_MS,
       idempotencyRetentionMs: data.CLEANUP_IDEMPOTENCY_RETENTION_MS,
     }),
+    proxyCheckTimeoutMs: data.PROXY_CHECK_TIMEOUT_MS,
     envKeysPresent: computeEnvKeysPresent(env),
     upstreamImageInput: data.UPSTREAM_IMAGE_INPUT ?? false,
     contextMaxChars: data.CONTEXT_MAX_CHARS,

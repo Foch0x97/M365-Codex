@@ -2,8 +2,9 @@ import { ApiError, API_KEY_PREFIX } from '@m365-codex/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { apiKeyLookupPrefix, isWellFormedApiKey, verifyApiKey } from '../crypto/apiKey.js';
 import type { AppContext } from '../context.js';
-import { evaluateApiKeyUsability, type ApiKeyRow } from '../repo/apiKeys.js';
+import { evaluateApiKeyUsability, parseList, type ApiKeyRow } from '../repo/apiKeys.js';
 import type { AdminSessionRow } from '../repo/adminSessions.js';
+import { maskIp } from '../observability/logger.js';
 
 /** 鉴权：对外 API Key 与管理端会话两条独立通道。 */
 
@@ -35,12 +36,28 @@ export function extractBearerToken(request: FastifyRequest): string | null {
   return match?.[1]?.trim() ?? null;
 }
 
+/** 从请求里取出本次调用的端点标识（`METHOD /route/pattern`），用于限额白名单与幂等作用域。 */
+export function endpointTagFor(request: FastifyRequest): string {
+  const pattern = request.routeOptions.url ?? request.url;
+  return `${request.method} ${pattern}`;
+}
+
+/** 从已解析的请求体里取出 `model` 字段（仅 Responses / Chat Completions 请求有意义）。 */
+function modelFromBody(request: FastifyRequest): string | null {
+  const body = request.body;
+  if (body !== null && typeof body === 'object' && 'model' in body) {
+    const model = (body as { model?: unknown }).model;
+    return typeof model === 'string' && model !== '' ? model : null;
+  }
+  return null;
+}
+
 /**
- * 校验对外 API Key。
+ * 校验对外 API Key，并施加 §10 的限额（接口/模型白名单、RPM/日配额/最大并发）。
  * 前缀命中后仍逐个做恒定时间哈希比较，避免通过响应时间区分 Key 是否存在。
  */
 export function createApiKeyGuard(context: AppContext) {
-  return async function apiKeyGuard(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
+  return async function apiKeyGuard(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     const presented = extractApiKey(request);
     if (presented === null) {
       throw ApiError.unauthorized(
@@ -68,9 +85,67 @@ export function createApiKeyGuard(context: AppContext) {
       throw ApiError.forbidden(usability.reason);
     }
 
+    const endpoint = endpointTagFor(request);
+    const model = modelFromBody(request);
+
+    try {
+      context.rateLimiter.checkEndpointAndModel(
+        { endpoints: parseList(matched.allowed_endpoints), models: parseList(matched.allowed_models) },
+        endpoint,
+        model,
+      );
+    } catch (error) {
+      recordRestrictionHit(context, matched.id, endpoint, 'api_key.access_denied', 'endpoint_or_model', clientIpFor(context, request));
+      throw error;
+    }
+
+    const limits = context.rateLimiter.effectiveLimits(matched);
+    const consumed = context.rateLimiter.consume(matched.id, limits);
+    if (!consumed.ok) {
+      recordRestrictionHit(context, matched.id, endpoint, 'api_key.rate_limited', consumed.reason, clientIpFor(context, request));
+      reply.header('Retry-After', String(consumed.retryAfterSeconds));
+      throw ApiError.rateLimited(
+        `已达到该 API Key 的${rateLimitReasonLabel(consumed.reason)}限额，请在 ${consumed.retryAfterSeconds} 秒后重试`,
+      );
+    }
+    // 并发额度用 HTTP 连接的 close 事件释放：流式（SSE）响应会 hijack，Fastify 的
+    // onResponse 钩子对 hijack 后的连接不生效，raw 的 close 事件则无论是否 hijack 都可靠触发
+    // （路由里客户端断线取消上游用的是同一个事件，已验证可靠）。
+    reply.raw.once('close', consumed.release);
+
     request.apiKeyRow = matched;
     context.apiKeys.touch(matched.id, clientIpFor(context, request));
   };
+}
+
+function rateLimitReasonLabel(reason: 'rpm' | 'daily' | 'concurrency'): string {
+  switch (reason) {
+    case 'rpm':
+      return '每分钟请求数';
+    case 'daily':
+      return '每日请求';
+    case 'concurrency':
+      return '并发请求数';
+  }
+}
+
+/** 限额/白名单命中要留痕，但绝不能把请求内容（model 之外的任何字段）写进审计或指标。 */
+function recordRestrictionHit(
+  context: AppContext,
+  apiKeyId: string,
+  endpoint: string,
+  action: string,
+  reason: string,
+  clientIp: string | null,
+): void {
+  context.metrics.rateLimitRejections.inc({ reason });
+  context.auditLogs.record({
+    actor: 'api_key',
+    action,
+    target: apiKeyId,
+    detail: { endpoint, reason },
+    clientIp: maskIp(clientIp ?? undefined, context.config.logPrivacyMode),
+  });
 }
 
 /** 校验管理端会话令牌。 */

@@ -139,6 +139,11 @@ export class Metrics {
   );
   readonly tokenRefresh = new Counter('m365codex_token_refresh_total', 'Token 刷新结果');
   readonly accountStates = new Counter('m365codex_account_state_transitions_total', '账号状态迁移');
+  /** API Key 级限额命中次数，按原因分类（rpm/daily/concurrency/endpoint/model），对应 §10 */
+  readonly rateLimitRejections = new Counter(
+    'm365codex_rate_limit_rejections_total',
+    'API Key 级限额拒绝次数（按原因分类）',
+  );
 
   /** 由外部在抓取时填充的即时值（账号数、文件占用等）。 */
   #gauges = new Map<string, { help: string; value: number; labels: string }>();
@@ -159,6 +164,7 @@ export class Metrics {
       this.toolArgValidations,
       this.tokenRefresh,
       this.accountStates,
+      this.rateLimitRejections,
     ]) {
       lines.push(...metric.render());
     }
