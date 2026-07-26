@@ -16,6 +16,9 @@ import { AdminSessionRepository } from './repo/adminSessions.js';
 import { ApiKeyRepository } from './repo/apiKeys.js';
 import { AuditLogRepository } from './repo/auditLogs.js';
 import { OAuthSessionRepository } from './repo/oauthSessions.js';
+import { ResponseRepository } from './repo/responses.js';
+import { InFlightRegistry } from './responses/inFlight.js';
+import { ResponsesService } from './responses/service.js';
 
 /**
  * 运行时上下文：把配置、数据库、加密器、日志与各服务集中传递，
@@ -38,6 +41,9 @@ export interface AppContext {
   readonly codec: ProtocolCodec;
   readonly pool: AccountPool;
   readonly dispatcher: UpstreamDispatcher;
+  readonly responses: ResponsesService;
+  readonly responseRepo: ResponseRepository;
+  readonly inFlight: InFlightRegistry;
   /** 仅在配置了 EXTERNAL_ACCOUNTS_FILE 时创建 */
   readonly externalSync: ExternalAccountSync | null;
   readonly startedAt: number;
@@ -77,6 +83,9 @@ export function createContext(options: CreateContextOptions): AppContext {
     logger,
     proxyUrl: config.httpsProxy ?? config.httpProxy,
   });
+  const responseRepo = new ResponseRepository(db);
+  const responsesService = new ResponsesService({ dispatcher, responses: responseRepo, logger });
+  const inFlight = new InFlightRegistry();
 
   return {
     config,
@@ -95,6 +104,9 @@ export function createContext(options: CreateContextOptions): AppContext {
     codec,
     pool,
     dispatcher,
+    responses: responsesService,
+    responseRepo,
+    inFlight,
     externalSync:
       config.externalAccountsFile === null
         ? null

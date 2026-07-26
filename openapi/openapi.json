@@ -1,0 +1,234 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "M365-Codex 对外 API",
+    "version": "0.4.0",
+    "description": "与 OpenAI Responses 兼容的本地网关接口（M4 文本子集）。非官方项目。"
+  },
+  "servers": [{ "url": "/" }],
+  "security": [{ "ApiKeyAuth": [] }, { "BearerAuth": [] }],
+  "paths": {
+    "/v1/models": {
+      "get": {
+        "summary": "列出可用模型",
+        "responses": {
+          "200": {
+            "description": "模型列表",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ModelList" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/responses": {
+      "post": {
+        "summary": "创建一次 Response（非流式或 SSE 流式）",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateResponseRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "非流式返回 Response 对象；stream=true 时为 text/event-stream",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Response" } },
+              "text/event-stream": { "schema": { "type": "string" } }
+            }
+          },
+          "422": { "$ref": "#/components/responses/Error" },
+          "502": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/responses/{id}": {
+      "get": {
+        "summary": "取回一次 Response",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Response 对象",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Response" } }
+            }
+          },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "summary": "删除/取消一次 Response",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "已删除" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/v1/responses/{id}/cancel": {
+      "post": {
+        "summary": "取消进行中的 Response",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "取消中" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": { "type": "apiKey", "in": "header", "name": "X-API-Key" },
+      "BearerAuth": { "type": "http", "scheme": "bearer" }
+    },
+    "responses": {
+      "Error": {
+        "description": "统一错误体",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorBody": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["type", "code", "message"],
+            "properties": {
+              "type": { "type": "string" },
+              "code": { "type": "string" },
+              "message": { "type": "string" },
+              "param": { "type": ["string", "null"] },
+              "request_id": { "type": ["string", "null"] }
+            }
+          }
+        }
+      },
+      "ModelList": {
+        "type": "object",
+        "required": ["object", "data"],
+        "properties": {
+          "object": { "const": "list" },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "object", "owned_by"],
+              "properties": {
+                "id": { "type": "string" },
+                "object": { "const": "model" },
+                "owned_by": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "CreateResponseRequest": {
+        "type": "object",
+        "required": ["model", "input"],
+        "properties": {
+          "model": { "type": "string" },
+          "input": {
+            "oneOf": [{ "type": "string" }, { "type": "array" }]
+          },
+          "instructions": { "type": "string" },
+          "stream": { "type": "boolean" },
+          "tools": { "type": "array" },
+          "previous_response_id": { "type": "string" },
+          "metadata": { "type": "object", "additionalProperties": { "type": "string" } },
+          "max_output_tokens": { "type": "integer" },
+          "temperature": { "type": "number" },
+          "reasoning": { "type": "object" }
+        }
+      },
+      "UrlCitation": {
+        "type": "object",
+        "required": ["type", "url", "start_index", "end_index"],
+        "properties": {
+          "type": { "const": "url_citation" },
+          "url": { "type": "string" },
+          "title": { "type": ["string", "null"] },
+          "start_index": { "type": "integer" },
+          "end_index": { "type": "integer" }
+        }
+      },
+      "OutputTextContent": {
+        "type": "object",
+        "required": ["type", "text", "annotations"],
+        "properties": {
+          "type": { "const": "output_text" },
+          "text": { "type": "string" },
+          "annotations": { "type": "array", "items": { "$ref": "#/components/schemas/UrlCitation" } }
+        }
+      },
+      "MessageItem": {
+        "type": "object",
+        "required": ["id", "type", "role", "status", "content"],
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "const": "message" },
+          "role": { "const": "assistant" },
+          "status": { "type": "string", "enum": ["in_progress", "completed"] },
+          "content": { "type": "array", "items": { "$ref": "#/components/schemas/OutputTextContent" } }
+        }
+      },
+      "ReasoningItem": {
+        "type": "object",
+        "required": ["id", "type", "summary"],
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "const": "reasoning" },
+          "summary": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["type", "text"],
+              "properties": { "type": { "const": "summary_text" }, "text": { "type": "string" } }
+            }
+          }
+        }
+      },
+      "Response": {
+        "type": "object",
+        "required": ["id", "object", "created_at", "status", "model", "output"],
+        "properties": {
+          "id": { "type": "string" },
+          "object": { "const": "response" },
+          "created_at": { "type": "integer" },
+          "status": {
+            "type": "string",
+            "enum": ["queued", "in_progress", "completed", "incomplete", "failed", "cancelled"]
+          },
+          "model": { "type": "string" },
+          "output": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                { "$ref": "#/components/schemas/ReasoningItem" },
+                { "$ref": "#/components/schemas/MessageItem" }
+              ]
+            }
+          },
+          "usage": { "type": ["object", "null"] },
+          "metadata": { "type": ["object", "null"] },
+          "previous_response_id": { "type": ["string", "null"] },
+          "reasoning": { "type": ["object", "null"] },
+          "max_output_tokens": { "type": ["integer", "null"] },
+          "temperature": { "type": ["number", "null"] },
+          "error": { "type": ["object", "null"] },
+          "incomplete_details": { "type": ["object", "null"] }
+        }
+      }
+    }
+  }
+}

@@ -122,9 +122,47 @@ CREATE TABLE oauth_sessions (
 CREATE INDEX idx_oauth_sessions_expires_at ON oauth_sessions (expires_at);
 `;
 
+const M003_RESPONSES = `
+-- Responses 请求记录。
+-- 每次请求都记录 requested_* 与 upstream/reported_* 四组模型信息（对应实施计划 §4.2）：
+--   requested_model / requested_reasoning_effort：客户端请求的原值
+--   upstream_model_parameter：实际透传给上游的值
+--   reported_upstream_model：上游自报的模型（可能与请求不一致）
+-- body 存完成后的 Response JSON，供 GET /v1/responses/:id 返回。
+CREATE TABLE responses (
+  id                         TEXT PRIMARY KEY,
+  api_key_id                 TEXT REFERENCES api_keys (id),
+  account_id                 TEXT REFERENCES accounts (id),
+  status                     TEXT NOT NULL,
+  requested_model            TEXT,
+  requested_reasoning_effort TEXT,
+  upstream_model_parameter   TEXT,
+  reported_upstream_model    TEXT,
+  previous_response_id       TEXT,
+  idempotency_key            TEXT,
+  body                       TEXT,
+  error_message              TEXT,
+  created_at                 INTEGER NOT NULL,
+  updated_at                 INTEGER NOT NULL,
+  UNIQUE (api_key_id, idempotency_key)
+);
+CREATE INDEX idx_responses_api_key ON responses (api_key_id);
+CREATE INDEX idx_responses_status ON responses (status);
+
+-- Response ↔ 账号 ↔ 上游会话的粘性绑定（对应实施计划 §5）。
+-- previous_response_id 续接时据此复用同一账号与上游会话。
+CREATE TABLE conversation_bindings (
+  response_id               TEXT PRIMARY KEY REFERENCES responses (id) ON DELETE CASCADE,
+  account_id                TEXT REFERENCES accounts (id),
+  upstream_conversation_ref TEXT,
+  created_at                INTEGER NOT NULL
+);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'core_settings_apikeys_admin_audit', sql: M001_CORE },
   { version: 2, name: 'accounts_tokens_health_oauth_sessions', sql: M002_ACCOUNTS },
+  { version: 3, name: 'responses_conversation_bindings', sql: M003_RESPONSES },
 ];
 
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(

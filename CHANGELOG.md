@@ -12,7 +12,59 @@
 
 ### 计划中
 
-- M4：Responses 非流式 + 流式（SSE）
+- M5：工具调用与完整代理循环
+
+---
+
+## [0.4.0] - 2026-07-26
+
+里程碑 **M4 · Responses 非流式 + 流式（SSE）** 完成。这是 Codex 真正连上来的一层。
+
+> M4 仅文本；工具调用代理循环在 M5，图片/文件在 M6。请求里出现这些内容时
+> 返回清晰的 `unsupported_feature` 错误，不静默伪装生效。
+
+### 新增
+
+- **对外 `/v1` 接口**：`GET /v1/models`、`POST /v1/responses`（非流式 + SSE 流式）、
+  `GET /v1/responses/:id`、`DELETE /v1/responses/:id`、`POST /v1/responses/:id/cancel`。
+  全部走 API Key 鉴权。
+- **Responses 状态机**：把上游归一化事件流翻译成 OpenAI Responses 的 SSE 事件，
+  保证每个事件带**单调递增的 sequence_number**、事件顺序正确
+  （item added → content part added → deltas → part done → item done → completed）、
+  reasoning 摘要项在 message 项之前、`response_id` 全程稳定。
+- **SSE 事件词汇表**（§4.3）：created / in_progress / output_item.added|done /
+  content_part.added|done / output_text.delta|done / output_text.annotation.added /
+  reasoning_summary_text.delta|done / completed / incomplete / failed / error。
+  Copilot 引用映射为 `output_text.annotation.added`（url_citation）。
+- **请求字段**（§4.2）：model、input（字符串或消息数组）、instructions、stream、
+  tools（记录，执行留 M5）、previous_response_id、metadata、max_output_tokens、
+  temperature、reasoning（含 effort，**原样透传不改写**）。每次请求记录
+  requested_model / requested_reasoning_effort / upstream_model_parameter。
+- **粘性续接**：`previous_response_id` 经 conversation_bindings 复用上一轮的账号与
+  上游会话引用。
+- **取消**：客户端断开自动向上游发取消帧；`POST /:id/cancel` 与 `DELETE /:id`
+  可中止另一路进行中的请求（进程内 InFlight 登记表）。
+- **模型目录**：`config/models.json` 可更新，`/v1/models` 据此展示；
+  model 值原样透传，不造别名、不参与路由决策。可用 `MODELS_FILE` 覆盖。
+- **数据表**：`responses`（含四组模型信息与完成后的 Response JSON）、
+  `conversation_bindings`。
+- **错误语义**：账号池耗尽 503、图片/文件输入与工具输出 422 unsupported_feature、
+  上游失败 502；非流式返回对应 HTTP 状态，流式在事件流内以 response.failed 表达。
+- **OpenAPI 3.1 契约**：`openapi/openapi.json` 描述全部 `/v1` 端点与 Response/错误体 schema。
+
+### 测试
+
+新增 63 个用例（累计 332 个，26 个文件）：
+
+- 状态机：sequence_number 单调、事件顺序、reasoning 先于 message、引用映射、
+  失败/取消收尾、快照深拷贝
+- 请求校验与输入提取：字符串/数组 input、图片/文件/工具输出的清晰报错、透传组装
+- 全链路（路由→服务→状态机→调度器→真实连接→模拟 Sydney 上游）：非流式返回完整
+  Response、SSE 流式解析、model/effort 透传落库、账号池耗尽 503、图片 422、
+  previous_response_id 粘性、GET/cancel/delete、API Key 归属隔离、上游失败 502
+- 模型目录加载与回退
+- **OpenAPI 契约测试**：用 ajv 按 openapi.json 的 schema 校验真实响应
+  （ModelList、Response、ErrorBody、SSE completed 事件里的 response）
 
 ---
 
@@ -159,7 +211,8 @@
 - 计划 §5 列出的其余表（`accounts`、`account_tokens`、`responses` 等）留到各自里程碑的迁移中创建，避免提前产生无人使用的空表。
 - SQLite 采用 Node 24 内置的 `node:sqlite` 而非 `better-sqlite3`，以避免原生模块编译，简化多架构镜像构建。
 
-[未发布]: https://github.com/Foch0x97/M365-Codex/compare/v0.3.0...HEAD
+[未发布]: https://github.com/Foch0x97/M365-Codex/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Foch0x97/M365-Codex/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Foch0x97/M365-Codex/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Foch0x97/M365-Codex/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Foch0x97/M365-Codex/releases/tag/v0.1.0

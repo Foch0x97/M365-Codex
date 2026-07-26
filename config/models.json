@@ -1,0 +1,9 @@
+{
+  "comment": "可更新的模型目录。model 原样透传给上游，容器不改写、不造别名。此列表仅用于 /v1/models 展示与 Codex 端选择。",
+  "object": "list",
+  "data": [
+    { "id": "gpt-5-codex", "object": "model", "owned_by": "m365-codex" },
+    { "id": "gpt-5", "object": "model", "owned_by": "m365-codex" },
+    { "id": "gpt-5-mini", "object": "model", "owned_by": "m365-codex" }
+  ]
+}

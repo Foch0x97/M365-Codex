@@ -5,6 +5,7 @@ import type { AppContext } from './context.js';
 import { registerAccountRoutes } from './routes/accounts.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerV1Routes } from './routes/v1.js';
 
 /** 组装 Fastify 应用。测试通过 `app.inject()` 直接调用，无需真实监听端口。 */
 
@@ -103,6 +104,7 @@ export function buildApp(context: AppContext, options: BuildAppOptions = {}): Fa
   registerHealthRoutes(app, context);
   registerAdminRoutes(app, context);
   registerAccountRoutes(app, context);
+  registerV1Routes(app, context);
 
   return app;
 }
