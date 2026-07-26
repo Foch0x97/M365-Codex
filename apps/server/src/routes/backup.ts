@@ -1,6 +1,7 @@
 import type { Buffer } from 'node:buffer';
 import { ApiError, type AccountStatus } from '@m365-codex/shared';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import type { AppContext } from '../context.js';
 import { summarizeConfig } from '../config/index.js';
 import { createAdminGuard } from '../gateway/auth.js';
@@ -33,16 +34,49 @@ function requireUploadedFile(request: FastifyRequest): MultipartFileField {
   return field;
 }
 
+const createBackupSchema = z
+  .object({
+    // 缺省保持原有行为（含文件），不能因为补这个入参悄悄改变默认语义
+    includeFiles: z.boolean({ invalid_type_error: 'includeFiles 必须是布尔值' }).optional(),
+  })
+  .strict();
+
+/** 与 adminOps.ts 同款：解析失败就抛统一错误体，不静默回落。 */
+function parseOrThrow<T>(schema: z.ZodType<T>, payload: unknown): T {
+  const result = schema.safeParse(payload);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    throw ApiError.badRequest(issue?.message ?? '请求体不合法', issue?.path.join('.') || undefined);
+  }
+  return result.data;
+}
+
 export function registerBackupRoutes(app: FastifyInstance, context: AppContext): void {
   const adminGuard = createAdminGuard(context);
 
   // -----------------------------------------------------------------------
   // 备份
   // -----------------------------------------------------------------------
-  app.post('/admin/backup', { preHandler: adminGuard }, async (_request, reply) => {
-    const { archive } = context.backup.create();
+  app.post('/admin/backup', { preHandler: adminGuard }, async (request, reply) => {
+    // 请求体是可选的：多数客户端不带 body，这时按缺省（含文件）走。
+    // 但**带了 body 就必须合法**——把 includeFiles 写成字符串之类的错误如果被静默
+    // 忽略，调用方会以为自己拿到的是「只含数据库」的包，实际拿到的是完整包。
+    // 影响语义的参数不能静默伪装生效（护栏 §1.7）。
+    const rawBody = request.body;
+    const bodyOmitted =
+      rawBody === undefined ||
+      rawBody === null ||
+      (typeof rawBody === 'object' && Object.keys(rawBody).length === 0);
+    const includeFiles = bodyOmitted ? undefined : parseOrThrow(createBackupSchema, rawBody).includeFiles;
+
+    const { archive, manifest } = context.backup.create({ includeFiles });
     const saved = context.backupStore.save(archive);
-    context.auditLogs.record({ actor: 'admin', action: 'backup.create', target: saved.id, detail: { bytes: saved.bytes } });
+    context.auditLogs.record({
+      actor: 'admin',
+      action: 'backup.create',
+      target: saved.id,
+      detail: { bytes: saved.bytes, includes_files: manifest.includes_files },
+    });
     reply.code(201);
     return saved;
   });

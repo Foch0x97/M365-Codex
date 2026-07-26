@@ -1,8 +1,9 @@
 import { Buffer } from 'node:buffer';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { unpackArchive } from '../src/backup/archive.js';
 import { createTestHarness, loginAdmin, type TestHarness } from './helpers/testApp.js';
 
 /**
@@ -49,6 +50,90 @@ describe('POST /admin/backup', () => {
     harness = await createTestHarness();
     const res = await harness.app.inject({ method: 'POST', url: '/admin/backup' });
     expect(res.statusCode).toBe(401);
+  });
+
+  it('includeFiles: false 时不打包已上传文件，manifest.includes_files 为 false', async () => {
+    const { h, token } = await setup();
+    // 在数据目录下伪造一份已上传文件内容，验证它没有被打进备份包
+    mkdirSync(join(dataDir as string, 'files', 'file-a'), { recursive: true });
+    writeFileSync(join(dataDir as string, 'files', 'file-a', 'content'), '附件内容', 'utf8');
+
+    const res = await h.app.inject({
+      method: 'POST',
+      url: '/admin/backup',
+      headers: auth(token),
+      payload: { includeFiles: false },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as { id: string };
+
+    const download = await h.app.inject({
+      method: 'GET',
+      url: `/admin/backup/${body.id}/download`,
+      headers: auth(token),
+    });
+    const entries = unpackArchive(download.rawPayload);
+    expect(entries.some((e) => e.path.startsWith('files/'))).toBe(false);
+
+    const manifestEntry = entries.find((e) => e.path === 'manifest.json');
+    const manifest = JSON.parse(manifestEntry?.content.toString('utf8') ?? '{}') as { includes_files: boolean };
+    expect(manifest.includes_files).toBe(false);
+
+    const actions = h.context.auditLogs.recent(10).map((row) => ({ action: row.action, detail: row.detail }));
+    const createEntry = actions.find((a) => a.action === 'backup.create');
+    expect(createEntry?.detail).toContain('"includes_files":false');
+  });
+
+  // 带了 body 就必须合法：把 includeFiles 写成字符串如果被静默忽略，
+  // 调用方会以为拿到的是「只含数据库」的包，实际拿到的是完整包（护栏 §1.7）
+  it('includeFiles 类型不对时明确报错，而不是静默按缺省处理', async () => {
+    const { h, token } = await setup();
+    const res = await h.app.inject({
+      method: 'POST',
+      url: '/admin/backup',
+      headers: auth(token),
+      payload: { includeFiles: 'false' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toContain('includeFiles');
+  });
+
+  it('body 里出现未知字段时同样报错，避免拼错字段名却以为生效', async () => {
+    const { h, token } = await setup();
+    const res = await h.app.inject({
+      method: 'POST',
+      url: '/admin/backup',
+      headers: auth(token),
+      payload: { include_files: false },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('显式传 includeFiles: true 与缺省行为一致', async () => {
+    const { h, token } = await setup();
+    const res = await h.app.inject({
+      method: 'POST',
+      url: '/admin/backup',
+      headers: auth(token),
+      payload: { includeFiles: true },
+    });
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('缺省（不传 includeFiles）时保持原有行为：包含已上传文件', async () => {
+    const { h, token } = await setup();
+    mkdirSync(join(dataDir as string, 'files', 'file-b'), { recursive: true });
+    writeFileSync(join(dataDir as string, 'files', 'file-b', 'content'), '附件内容', 'utf8');
+
+    const res = await h.app.inject({ method: 'POST', url: '/admin/backup', headers: auth(token) });
+    const body = res.json() as { id: string };
+    const download = await h.app.inject({
+      method: 'GET',
+      url: `/admin/backup/${body.id}/download`,
+      headers: auth(token),
+    });
+    const entries = unpackArchive(download.rawPayload);
+    expect(entries.some((e) => e.path.startsWith('files/'))).toBe(true);
   });
 });
 
