@@ -8,7 +8,8 @@ import type { UpstreamEvent } from '../src/adapter/protocol.js';
  * 重点是「工具 JSON 不得同时作为正文重复输出」。
  */
 
-const weather = parseTool(
+// parseTool 返回数组（namespace 分组会摊平成多个工具），这里取第一个
+const [weather] = parseTool(
   {
     type: 'function',
     name: 'get_weather',
