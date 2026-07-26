@@ -13,7 +13,7 @@
     "apps/server"
   ],
   "scripts": {
-    "build": "tsc -b apps/server",
+    "build": "tsc -b apps/server && npm run build --prefix apps/web",
     "clean": "tsc -b --clean apps/server",
     "dev": "npm run dev --workspace @m365-codex/server",
     "start": "node apps/server/dist/server.js",
@@ -21,7 +21,11 @@
     "test:coverage": "npm run test:coverage --workspace @m365-codex/server",
     "typecheck": "tsc -b apps/server && tsc --noEmit -p apps/server/tsconfig.test.json",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "build:server": "tsc -b apps/server",
+    "install:all": "npm ci && npm ci --prefix apps/web",
+    "test:web": "npm run test --prefix apps/web",
+    "typecheck:web": "npm run typecheck --prefix apps/web"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

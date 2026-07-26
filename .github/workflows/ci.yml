@@ -37,6 +37,17 @@ jobs:
       - name: 单元与集成测试
         run: npm test
 
+      # 管理界面不在根 workspace 里（前端依赖树和服务端毫无交集，分开各自的
+      # lockfile 更清爽），所以单独装依赖、单独跑检查
+      - name: 安装管理界面依赖
+        run: npm ci --prefix apps/web
+      - name: 管理界面类型检查
+        run: npm run typecheck:web
+      - name: 管理界面测试
+        run: npm run test:web
+      - name: 管理界面构建
+        run: npm run build --prefix apps/web
+
   security:
     name: 依赖漏洞与凭据扫描
     runs-on: ubuntu-latest

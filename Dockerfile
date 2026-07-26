@@ -19,6 +19,14 @@ COPY packages/shared packages/shared
 COPY apps/server apps/server
 RUN npm run build
 
+# 管理界面单独装依赖、单独构建。它不在根 workspace 里，用自己的 lockfile——
+# 前端依赖树（React/Vite）和服务端毫无交集，混进同一个 lockfile 只会让
+# 两边互相牵制。分开也让「只改前端」时的镜像层缓存不被服务端改动打断。
+COPY apps/web/package.json apps/web/package-lock.json apps/web/
+RUN npm ci --prefix apps/web
+COPY apps/web apps/web
+RUN npm run build --prefix apps/web
+
 # 只保留生产依赖
 RUN npm prune --omit=dev
 
@@ -47,6 +55,8 @@ COPY --from=builder /app/packages/shared/node_modules ./packages/shared/node_mod
 COPY --from=builder /app/apps/server/package.json ./apps/server/package.json
 COPY --from=builder /app/apps/server/dist ./apps/server/dist
 COPY --from=builder /app/apps/server/node_modules ./apps/server/node_modules
+# 管理界面只需要构建产物，不带前端的 node_modules
+COPY --from=builder /app/apps/web/dist ./apps/web/dist
 
 # node 镜像自带 uid/gid 1000 的 node 用户；数据目录需归它所有
 RUN mkdir -p /data && chown -R node:node /data /app
