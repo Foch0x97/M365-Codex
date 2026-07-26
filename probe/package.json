@@ -1,0 +1,27 @@
+{
+  "name": "@m365-codex/probe",
+  "version": "0.1.0",
+  "private": true,
+  "description": "M0 上游能力探针：用真实 M365 Copilot 账号跑一遍固定用例，产出脱敏能力报告，用于校准 codecV1.ts 与相关配置。独立子包，不进根 workspace，不进生产镜像。",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "pino": "^9.6.0",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "vitest": "^3.0.0"
+  }
+}
