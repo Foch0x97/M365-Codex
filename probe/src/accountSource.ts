@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import type { Logger } from 'pino';
 import { openDatabase, runMigrations, type Database } from '../../apps/server/dist/db/index.js';
 import { Cryptor } from '../../apps/server/dist/crypto/index.js';
-import { AccountRepository, type AccountView } from '../../apps/server/dist/repo/accounts.js';
+import { AccountRepository } from '../../apps/server/dist/repo/accounts.js';
 import { HttpOAuthClient } from '../../apps/server/dist/oauth/client.js';
 import { TokenManager } from '../../apps/server/dist/oauth/tokenManager.js';
 import {
@@ -74,7 +74,3 @@ export function openAccountSource(options: OpenAccountDbOptions): AccountSource 
   };
 }
 
-/** 列出可选账号（供 CLI 不带 `--account`/`--all` 时展示）。绝不包含 Token。 */
-export function listAccountsForDisplay(accounts: AccountRepository): AccountView[] {
-  return accounts.listViews();
-}

@@ -12,9 +12,6 @@ import { generateSolidColorPngDataUrl } from './pngEncoder.js';
 
 export const TEXT_SHORT = '你好，这是 M365-Codex 探针的简短测试文本，请用一句话回复确认收到。';
 
-export const TEXT_BILINGUAL =
-  '请分别用中文和英文各写一句话，介绍今天天气晴朗。（This is a fixed bilingual probe test sentence: please reply in both Chinese and English.）';
-
 export const TEXT_INSTRUCTIONS =
   '你是 M365-Codex 探针使用的测试助手。回答一律使用简体中文，且不超过两句话，不要输出与本次测试无关的内容。';
 
@@ -85,7 +82,6 @@ export const TOOL_PROMPT_BAD_ARGS_HINT =
 export function ownLiterals(...extra: readonly string[]): ReadonlySet<string> {
   return new Set<string>([
     TEXT_SHORT,
-    TEXT_BILINGUAL,
     TEXT_INSTRUCTIONS,
     TEXT_LONG,
     TEXT_FILE_SAMPLE,

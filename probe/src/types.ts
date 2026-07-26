@@ -1,11 +1,5 @@
 import type { Logger } from 'pino';
-import type {
-  ProtocolCodec,
-  RawMessage,
-  ToolDeclaration,
-  ToolResultInput,
-  UpstreamEvent,
-} from '../../apps/server/dist/adapter/protocol.js';
+import type { ProtocolCodec, RawMessage, UpstreamEvent } from '../../apps/server/dist/adapter/protocol.js';
 import type { AccountRepository } from '../../apps/server/dist/repo/accounts.js';
 import type { OAuthClient } from '../../apps/server/dist/oauth/client.js';
 import type { TokenManager } from '../../apps/server/dist/oauth/tokenManager.js';
@@ -107,5 +101,3 @@ export interface CaseDefinition {
   name: string;
   run: (ctx: ProbeContext) => Promise<CapabilityResult>;
 }
-
-export type { ToolDeclaration, ToolResultInput, UpstreamEvent, RawMessage };
