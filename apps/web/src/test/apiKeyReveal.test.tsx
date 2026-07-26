@@ -7,8 +7,8 @@ import type { ApiKeyCreated, ApiKeyView } from '../api';
 
 const PLAINTEXT_KEY = 'sk-TESTONLYNOTREALSECRETVALUE0000000000000000';
 
-const listApiKeys = vi.fn<[], Promise<ApiKeyView[]>>();
-const createApiKey = vi.fn<[unknown], Promise<ApiKeyCreated>>();
+const listApiKeys = vi.fn<() => Promise<ApiKeyView[]>>();
+const createApiKey = vi.fn<(payload: unknown) => Promise<ApiKeyCreated>>();
 
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api');
