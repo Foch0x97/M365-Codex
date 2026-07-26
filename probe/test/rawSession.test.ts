@@ -24,6 +24,7 @@ function baseOptions(url: string) {
     invocationId: randomUUID(),
     text: '你好',
     handshakeTimeoutMs: 2000,
+    scenario: 'officeweb',
     idleTimeoutMs: 2000,
     totalTimeoutMs: 5000,
   };

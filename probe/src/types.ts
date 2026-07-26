@@ -72,6 +72,8 @@ export interface InvocationOutcome {
 /** 上游连接相关配置（对应 `apps/server/src/config/index.ts` 的 `UpstreamConfig`）。 */
 export interface ProbeUpstreamConfig {
   readonly wsBase: string;
+  /** 握手必须带的 X-Scenario 头，见服务端 UpstreamConfig.scenario */
+  readonly scenario: string;
   readonly pathTemplate: string;
   readonly protocolVersion: string;
   readonly heartbeatIntervalMs: number;

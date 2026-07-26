@@ -37,6 +37,7 @@ const upstreamConfig: UpstreamConfig = {
   handshakeTimeoutMs: 15000,
   idleTimeoutMs: 60000,
   maxReconnects: 2,
+  scenario: 'officeweb',
 };
 
 /** 构造一个按脚本队列逐次响应的假连接工厂，记录每次连接用的 URL。 */

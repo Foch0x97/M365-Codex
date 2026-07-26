@@ -23,6 +23,7 @@ const upstreamConfig: UpstreamConfig = {
   handshakeTimeoutMs: 15000,
   idleTimeoutMs: 60000,
   maxReconnects: 2,
+  scenario: 'officeweb',
 };
 
 describe('buildUpstreamUrl', () => {

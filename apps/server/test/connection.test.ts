@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { pino } from 'pino';
+import { WebSocket, type ClientOptions } from 'ws';
 import {
   DEFAULT_UPSTREAM_PATH_TEMPLATE,
   type UpstreamConfig,
@@ -29,6 +30,7 @@ function makeConfig(base: string): UpstreamConfig {
     handshakeTimeoutMs: 3000,
     idleTimeoutMs: 1000,
     maxReconnects: 2,
+    scenario: 'officeweb',
   };
 }
 
@@ -175,5 +177,34 @@ describe('取消', () => {
       conn.run({ url: urlFor(server.url), invocationId: 'i', text: 'q', signal: controller.signal }),
     );
     expect(events).toEqual([]);
+  });
+});
+
+describe('握手请求头', () => {
+  // 2026-07-27 真实账号实测：X-Scenario 是上游放行的**唯一硬条件**。
+  // 不带它一律 403，且响应体为空、没有 WWW-Authenticate，看起来完全像
+  // 「这个账号没有权限」——当初就是被这个假象带偏，误判成了地区封锁。
+  // 这条测试存在的意义就是防止有人把这个头当作无用代码删掉。
+  it('必须带上 X-Scenario 头，取值来自配置', async () => {
+    const server = await startMockSydneyServer({ kind: 'normal', chunks: ['ok'] });
+    try {
+      const seen: ClientOptions[] = [];
+      const connection = new SydneyConnection({
+        config: { ...makeConfig(server.url), scenario: 'officeweb' },
+        codec: new SydneyCodecV1(),
+        logger: pino({ level: 'silent' }),
+        wsFactory: (url, options) => {
+          seen.push(options);
+          return new WebSocket(url, options);
+        },
+      });
+      await collect(connection.run({ url: urlFor(server.url), invocationId: 'inv-header', text: 'hi' }));
+
+      expect(seen).toHaveLength(1);
+      const headers = seen[0]?.headers as Record<string, string> | undefined;
+      expect(headers?.['X-Scenario']).toBe('officeweb');
+    } finally {
+      await server.close();
+    }
   });
 });

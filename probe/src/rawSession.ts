@@ -34,6 +34,8 @@ export interface RawSessionOptions {
   tools?: readonly ToolDeclaration[] | undefined;
   toolResults?: readonly ToolResultInput[] | undefined;
   handshakeTimeoutMs: number;
+  /** 握手必须带的 X-Scenario 头；不带一律 403 */
+  scenario: string;
   idleTimeoutMs: number;
   /** 整个 invocation 的硬超时（含握手），超过则判定失败并关闭连接 */
   totalTimeoutMs: number;
@@ -85,7 +87,10 @@ export async function runRawSession(options: RawSessionOptions): Promise<Invocat
     let settled = false;
     let handshakeAcked = false;
     const reassembler = new FrameReassembler();
-    const ws = (options.wsFactory ?? ((url: string): WebSocket => new WebSocket(url)))(options.url);
+    // X-Scenario 是上游放行的硬条件，缺了它无论凭据多正确都是 403
+    const ws = (options.wsFactory ??
+      ((url: string): WebSocket =>
+        new WebSocket(url, { headers: { 'X-Scenario': options.scenario } })))(options.url);
 
     let totalTimer: NodeJS.Timeout | null = null;
     let idleTimer: NodeJS.Timeout | null = null;

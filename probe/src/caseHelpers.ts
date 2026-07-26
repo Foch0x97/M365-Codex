@@ -42,6 +42,7 @@ export async function runText(
     tools: options.tools,
     toolResults: options.toolResults,
     handshakeTimeoutMs: ctx.upstream.handshakeTimeoutMs,
+    scenario: ctx.upstream.scenario,
     idleTimeoutMs: ctx.upstream.idleTimeoutMs,
     totalTimeoutMs: options.totalTimeoutMs ?? ctx.invocationTimeoutMs,
     signal: options.signal,

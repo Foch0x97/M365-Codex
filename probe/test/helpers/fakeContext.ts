@@ -21,6 +21,7 @@ export function makeFakeContext(mockServerUrl: string, overrides: Partial<ProbeC
       heartbeatIntervalMs: 15_000,
       handshakeTimeoutMs: 2000,
       idleTimeoutMs: 2000,
+      scenario: 'officeweb',
     },
     codec: new SydneyCodecV1(),
     logger: createLogger({ level: 'silent', privacyMode: 'strict' }),

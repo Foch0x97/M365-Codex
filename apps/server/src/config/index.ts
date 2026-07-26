@@ -97,11 +97,24 @@ export interface UpstreamConfig {
   readonly idleTimeoutMs: number;
   /** WS 断开后的最大重连次数（同一账号内） */
   readonly maxReconnects: number;
+  /**
+   * WebSocket 握手时必须带的 `X-Scenario` 头。
+   *
+   * 2026-07-27 用真实账号实测：这个头是**上游放行的唯一硬条件**——不带它，
+   * 无论 token 多正确、放查询参数还是 Authorization 头，一律 403（空响应体、
+   * 无 WWW-Authenticate，看起来像"账号没权限"，极具误导性）。取值必须精确匹配，
+   * `bizchat` / `M365Chat` / 任意其它值都是 403。
+   *
+   * 做成配置项是因为它显然属于会随上游变动的东西；默认值来自实测。
+   */
+  readonly scenario: string;
 }
 
 export const DEFAULT_UPSTREAM_WS_BASE = 'wss://substrate.office.com';
 export const DEFAULT_UPSTREAM_PATH_TEMPLATE = '/m365Copilot/Chathub/{oid}@{tid}';
 export const DEFAULT_UPSTREAM_PROTOCOL_VERSION = 'sydney-json-v1';
+/** 实测值：上游只认这一个取值，换成别的一律 403（见 UpstreamConfig.scenario 注释）。 */
+export const DEFAULT_UPSTREAM_SCENARIO = 'officeweb';
 
 /**
  * 工具调用与代理循环的全局上限（对应实施计划 §7.4）。
@@ -334,6 +347,7 @@ const envSchema = z.object({
   OAUTH_SCOPES: optionalTrimmed,
   UPSTREAM_PATH_TEMPLATE: optionalTrimmed,
   UPSTREAM_PROTOCOL_VERSION: optionalTrimmed,
+  UPSTREAM_SCENARIO: optionalTrimmed,
   UPSTREAM_HEARTBEAT_INTERVAL_MS: positiveIntFromEnv(15_000, 1_000),
   UPSTREAM_HANDSHAKE_TIMEOUT_MS: positiveIntFromEnv(15_000, 1_000),
   UPSTREAM_IDLE_TIMEOUT_MS: positiveIntFromEnv(60_000, 1_000),
@@ -480,6 +494,7 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
       wsBase: data.UPSTREAM_WS_BASE ?? DEFAULT_UPSTREAM_WS_BASE,
       pathTemplate: data.UPSTREAM_PATH_TEMPLATE ?? DEFAULT_UPSTREAM_PATH_TEMPLATE,
       protocolVersion: data.UPSTREAM_PROTOCOL_VERSION ?? DEFAULT_UPSTREAM_PROTOCOL_VERSION,
+      scenario: data.UPSTREAM_SCENARIO ?? DEFAULT_UPSTREAM_SCENARIO,
       heartbeatIntervalMs: data.UPSTREAM_HEARTBEAT_INTERVAL_MS,
       handshakeTimeoutMs: data.UPSTREAM_HANDSHAKE_TIMEOUT_MS,
       idleTimeoutMs: data.UPSTREAM_IDLE_TIMEOUT_MS,

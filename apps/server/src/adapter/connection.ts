@@ -68,7 +68,12 @@ export class SydneyConnection {
     const reassembler = new FrameReassembler();
     let handshakeAcked = false;
 
-    const options: ClientOptions = { handshakeTimeout: config.handshakeTimeoutMs };
+    // X-Scenario 是上游放行的硬条件：不带它一律 403（空响应体、无 WWW-Authenticate，
+    // 看起来完全像「这个账号没权限」，实测排查时极具误导性）。取值必须精确匹配。
+    const options: ClientOptions = {
+      handshakeTimeout: config.handshakeTimeoutMs,
+      headers: { 'X-Scenario': config.scenario },
+    };
     if (this.#deps.proxyUrl != null && this.#deps.proxyUrl !== '') {
       options.agent = new HttpsProxyAgent(this.#deps.proxyUrl);
     }
