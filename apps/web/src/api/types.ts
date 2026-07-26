@@ -43,10 +43,6 @@ export interface SettingItem<T = unknown> {
 
 // ---- 登录 / 会话 ----
 
-export interface LoginRequest {
-  password: string;
-}
-
 export interface LoginResponse {
   token: string;
   expires_at: number;
@@ -296,11 +292,6 @@ export interface SettingsResponse {
 }
 
 export type SettingsGroupName = keyof SettingsResponse;
-
-export interface UpdateSettingsRequest {
-  group: SettingsGroupName;
-  values: Record<string, unknown>;
-}
 
 // ---- 出口代理池 ----
 

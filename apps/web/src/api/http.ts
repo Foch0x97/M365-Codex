@@ -14,10 +14,6 @@ export function setAuthToken(token: string | null): void {
   authToken = token;
 }
 
-export function getAuthToken(): string | null {
-  return authToken;
-}
-
 /** AuthContext 在挂载时注册：收到 401 就清空会话、跳转登录页。 */
 export function setUnauthorizedHandler(handler: (() => void) | null): void {
   unauthorizedHandler = handler;

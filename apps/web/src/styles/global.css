@@ -484,9 +484,6 @@ tbody tr:hover {
 .text-danger {
   color: var(--danger);
 }
-.mb-0 {
-  margin-bottom: 0;
-}
 .flex {
   display: flex;
 }
