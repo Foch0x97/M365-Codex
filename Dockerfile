@@ -17,7 +17,8 @@ RUN npm ci
 COPY tsconfig.base.json ./
 COPY packages/shared packages/shared
 COPY apps/server apps/server
-RUN npm run build
+# 只构建服务端：根 build 脚本还会构建前端，而此时 apps/web 还没 COPY 进来
+RUN npm run build:server
 
 # 管理界面单独装依赖、单独构建。它不在根 workspace 里，用自己的 lockfile——
 # 前端依赖树（React/Vite）和服务端毫无交集，混进同一个 lockfile 只会让
