@@ -164,7 +164,7 @@ npm run build              # 同时构建服务端与管理界面
 npm run dev
 ```
 
-### 4. 配置 Codex
+### 5. 配置 Codex
 
 在管理界面一键生成，或手写 `~/.codex/config.toml`：
 
