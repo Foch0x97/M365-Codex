@@ -1,21 +1,12 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { OAuthRequestError } from '../src/oauth/client.js';
-import { makeFakeJwt } from './helpers/fakeOAuth.js';
 import { createTestHarness, loginAdmin, type TestHarness } from './helpers/testApp.js';
 
 let harness: TestHarness | undefined;
-let tempDir: string | undefined;
 
 afterEach(async () => {
   await harness?.close();
   harness = undefined;
-  if (tempDir !== undefined) {
-    await rm(tempDir, { recursive: true, force: true });
-    tempDir = undefined;
-  }
 });
 
 function auth(token: string): Record<string, string> {
@@ -179,141 +170,5 @@ describe('DELETE /admin/accounts/:id', () => {
     expect(audit.body).toContain('account.delete');
     // 审计里只有脱敏邮箱
     expect(audit.body).toContain('us***@office.example.invalid');
-  });
-});
-
-describe('POST /admin/accounts/import', () => {
-  async function writeAccountsFile(emails: string[]): Promise<string> {
-    tempDir = await mkdtemp(join(tmpdir(), 'm365-codex-routes-'));
-    const filePath = join(tempDir, 'accounts.json');
-    await writeFile(
-      filePath,
-      JSON.stringify({
-        source: 'pkce-browser-gateway-local',
-        updatedAt: '2026-07-25T08:00:00Z',
-        accounts: emails.map((email) => {
-          const oid = email.split('@')[0] ?? email;
-          return {
-            id: oid,
-            email,
-            tid: 'tenant-1',
-            oid,
-            accessToken: makeFakeJwt({ tid: 'tenant-1', oid, preferred_username: email }),
-            refreshToken: `refresh-${oid}`,
-            expiresAt: '2099-01-01T00:00:00Z',
-          };
-        }),
-      }),
-      'utf8',
-    );
-    return filePath;
-  }
-
-  it('按路径导入账号', async () => {
-    const { h, token } = await setup();
-    const filePath = await writeAccountsFile([
-      'foch001@office.example.invalid',
-      'foch002@office.example.invalid',
-    ]);
-
-    const response = await h.app.inject({
-      method: 'POST',
-      url: '/admin/accounts/import',
-      headers: auth(token),
-      payload: { file: filePath },
-    });
-    expect(response.statusCode).toBe(200);
-    const summary = response.json() as { total: number; created: number };
-    expect(summary.total).toBe(2);
-    expect(summary.created).toBe(2);
-    expect(h.context.accounts.listViews()).toHaveLength(2);
-  });
-
-  it('未指定路径且未配置外部文件时返回 400', async () => {
-    const { h, token } = await setup();
-    const response = await h.app.inject({
-      method: 'POST',
-      url: '/admin/accounts/import',
-      headers: auth(token),
-      payload: {},
-    });
-    expect(response.statusCode).toBe(400);
-    expect(response.body).toContain('EXTERNAL_ACCOUNTS_FILE');
-  });
-
-  it('文件不存在返回 400 而不是 500', async () => {
-    const { h, token } = await setup();
-    const response = await h.app.inject({
-      method: 'POST',
-      url: '/admin/accounts/import',
-      headers: auth(token),
-      payload: { file: '/不存在/accounts.json' },
-    });
-    expect(response.statusCode).toBe(400);
-  });
-});
-
-describe('外部同步状态接口', () => {
-  it('未配置时报告 enabled=false', async () => {
-    const { h, token } = await setup();
-    const response = await h.app.inject({
-      method: 'GET',
-      url: '/admin/accounts-sync/status',
-      headers: auth(token),
-    });
-    expect(response.statusCode).toBe(200);
-    expect((response.json() as { enabled: boolean }).enabled).toBe(false);
-  });
-
-  it('未配置时手动触发返回 400', async () => {
-    const { h, token } = await setup();
-    const response = await h.app.inject({
-      method: 'POST',
-      url: '/admin/accounts-sync/run',
-      headers: auth(token),
-    });
-    expect(response.statusCode).toBe(400);
-  });
-
-  it('配置后可查询状态并手动触发同步', async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'm365-codex-routes-'));
-    const filePath = join(tempDir, 'accounts.json');
-    await writeFile(
-      filePath,
-      JSON.stringify({
-        accounts: [
-          {
-            email: 'sync@office.example.invalid',
-            tid: 'tenant-1',
-            oid: 'sync-user',
-            accessToken: makeFakeJwt({ tid: 'tenant-1', oid: 'sync-user' }),
-            refreshToken: 'refresh-sync',
-            expiresAt: '2099-01-01T00:00:00Z',
-          },
-        ],
-      }),
-      'utf8',
-    );
-
-    const { h, token } = await setup({
-      EXTERNAL_ACCOUNTS_FILE: filePath,
-      EXTERNAL_ACCOUNTS_SYNC_INTERVAL_MS: '0',
-    });
-
-    const status = await h.app.inject({
-      method: 'GET',
-      url: '/admin/accounts-sync/status',
-      headers: auth(token),
-    });
-    expect((status.json() as { enabled: boolean }).enabled).toBe(true);
-
-    const run = await h.app.inject({
-      method: 'POST',
-      url: '/admin/accounts-sync/run',
-      headers: auth(token),
-    });
-    expect(run.statusCode).toBe(200);
-    expect(h.context.accounts.listViews()).toHaveLength(1);
-    expect(h.context.accounts.listViews()[0]?.source).toBe('sync:m365-native');
   });
 });

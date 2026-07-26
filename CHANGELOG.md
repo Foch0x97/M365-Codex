@@ -16,6 +16,25 @@
 
 ---
 
+## [0.4.1] - 2026-07-26
+
+### 修复
+
+- **发布镜像改推 Docker Hub**：此前 `release.yml` 推到 GHCR（私有），而仓库配置的是
+  Docker Hub 凭据（`DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` / `DOCKERHUB_REPOSITORY`），
+  导致 Docker Hub 上一直没有镜像。现在用这些凭据推到
+  `<DOCKERHUB_USERNAME>/<DOCKERHUB_REPOSITORY>`，多架构（amd64/arm64），
+  标签规则不变（main/sha- 跟随主分支，版本号来自 tag，latest 仅正式 Release）。
+
+### 移除
+
+- **账号只保留 PKCE 授权一种添加方式**。删除「从 accounts.json 导入」与「外部文件实时
+  同步」两种方式及其接口（`/admin/accounts/import`、`/admin/accounts-sync/*`）、配置
+  （`EXTERNAL_ACCOUNTS_FILE`、`EXTERNAL_ACCOUNTS_SYNC_INTERVAL_MS`）与相关文档。
+  账号统一经本网关自己的 PKCE 流程添加，授权后用保存的 `refresh_token` 独立续期。
+
+---
+
 ## [0.4.0] - 2026-07-26
 
 里程碑 **M4 · Responses 非流式 + 流式（SSE）** 完成。这是 Codex 真正连上来的一层。
@@ -211,7 +230,8 @@
 - 计划 §5 列出的其余表（`accounts`、`account_tokens`、`responses` 等）留到各自里程碑的迁移中创建，避免提前产生无人使用的空表。
 - SQLite 采用 Node 24 内置的 `node:sqlite` 而非 `better-sqlite3`，以避免原生模块编译，简化多架构镜像构建。
 
-[未发布]: https://github.com/Foch0x97/M365-Codex/compare/v0.4.0...HEAD
+[未发布]: https://github.com/Foch0x97/M365-Codex/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/Foch0x97/M365-Codex/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Foch0x97/M365-Codex/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Foch0x97/M365-Codex/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Foch0x97/M365-Codex/compare/v0.1.0...v0.2.0

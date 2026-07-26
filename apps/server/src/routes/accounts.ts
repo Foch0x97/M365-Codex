@@ -1,13 +1,18 @@
 import { ApiError, ACCOUNT_STATUSES } from '@m365-codex/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { importAccountsFromFile, maskEmail } from '../accounts/importer.js';
 import type { AppContext } from '../context.js';
 import { createAdminGuard } from '../gateway/auth.js';
 import { TokenUnavailableError } from '../oauth/tokenManager.js';
 import { InvalidStateTransitionError } from '../repo/accounts.js';
+import { maskEmail } from '../util/redact.js';
 
-/** 账号与授权管理接口。所有响应都不含 Token。 */
+/**
+ * 账号与授权管理接口。所有响应都不含 Token。
+ *
+ * 添加账号只有一种方式：本网关自己的 PKCE 授权流程
+ * （authorize-url → 浏览器登录 → callback）。
+ */
 
 const callbackSchema = z.object({
   callback: z.string().min(1, '回调地址不能为空'),
@@ -15,11 +20,6 @@ const callbackSchema = z.object({
 
 const statusSchema = z.object({
   status: z.enum(ACCOUNT_STATUSES),
-});
-
-const importSchema = z.object({
-  /** 留空则使用配置中的 EXTERNAL_ACCOUNTS_FILE */
-  file: z.string().min(1).optional(),
 });
 
 function parseOrThrow<T>(schema: z.ZodType<T>, payload: unknown): T {
@@ -150,59 +150,4 @@ export function registerAccountRoutes(app: FastifyInstance, context: AppContext)
       return { deleted: true, id: request.params.id };
     },
   );
-
-  // ---- 从 M365 Native 助手导入 / 同步 ----
-
-  app.post('/admin/accounts/import', { preHandler: adminGuard }, async (request) => {
-    const body = parseOrThrow(importSchema, request.body ?? {});
-    const filePath = body.file ?? context.config.externalAccountsFile;
-    if (filePath === null || filePath === undefined) {
-      throw ApiError.badRequest(
-        '未指定账号文件路径，且未配置 EXTERNAL_ACCOUNTS_FILE',
-        'file',
-      );
-    }
-
-    let summary;
-    try {
-      summary = await importAccountsFromFile(filePath, context.accounts, {
-        sourceLabel: 'import:m365-native',
-      });
-    } catch (error) {
-      throw ApiError.badRequest((error as Error).message, 'file');
-    }
-
-    context.auditLogs.record({
-      actor: 'admin',
-      action: 'account.import',
-      detail: {
-        total: summary.total,
-        created: summary.created,
-        updated: summary.updated,
-        skipped: summary.skipped.length,
-      },
-    });
-    return summary;
-  });
-
-  app.get('/admin/accounts-sync/status', { preHandler: adminGuard }, async () => {
-    if (context.externalSync === null) {
-      return { enabled: false, file: null, state: null };
-    }
-    return {
-      enabled: true,
-      file: context.config.externalAccountsFile,
-      interval_ms: context.config.externalAccountsSyncIntervalMs,
-      state: context.externalSync.state,
-    };
-  });
-
-  app.post('/admin/accounts-sync/run', { preHandler: adminGuard }, async () => {
-    if (context.externalSync === null) {
-      throw ApiError.badRequest('未配置 EXTERNAL_ACCOUNTS_FILE，同步未启用');
-    }
-    const state = await context.externalSync.runOnce(true);
-    context.auditLogs.record({ actor: 'admin', action: 'account.sync.manual' });
-    return state;
-  });
 }

@@ -1,8 +1,13 @@
 name: 发布镜像
 
-# 镜像标签策略：
+# 推送到 Docker Hub。镜像仓库与凭据来自仓库配置：
+#   secrets.DOCKERHUB_USERNAME / secrets.DOCKERHUB_TOKEN
+#   vars.DOCKERHUB_REPOSITORY（如 m365-codex）
+# 镜像名为 <DOCKERHUB_USERNAME>/<DOCKERHUB_REPOSITORY>。
+#
+# 标签策略：
 #   push 到 main   → main、sha-<短哈希>
-#   打 v* 版本 tag → 完整版本号、主次版本号（如 v0.2.0 → 0.2.0、0.2）
+#   打 v* 版本 tag → 完整版本号、主次版本号（如 v0.4.0 → 0.4.0、0.4）
 #   正式 Release   → latest（仅此一种情况会移动 latest）
 on:
   push:
@@ -14,40 +19,35 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
 jobs:
   publish:
-    name: 构建并推送多架构镜像
+    name: 构建并推送多架构镜像到 Docker Hub
     runs-on: ubuntu-latest
+    # 未配置 Docker Hub 仓库变量时跳过（例如 fork），避免无谓失败
+    if: ${{ vars.DOCKERHUB_REPOSITORY != '' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - name: 登录 GHCR
+      - name: 登录 Docker Hub
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: 计算镜像标签
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # 关掉默认的 latest=auto：它会给任何 semver tag 自动打 latest，
-          # 而本项目要求 latest 只在正式 Release 时移动（见实施计划 §M9）
+          images: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_REPOSITORY }}
+          # 关掉默认的 latest=auto：latest 只在正式 Release 时移动
           flavor: |
             latest=false
           tags: |
@@ -72,5 +72,5 @@ jobs:
 
       - name: 输出已推送的标签
         run: |
-          echo "已推送以下镜像标签："
+          echo "已推送以下镜像标签到 Docker Hub："
           echo "${{ steps.meta.outputs.tags }}"

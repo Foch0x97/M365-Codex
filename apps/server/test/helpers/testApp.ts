@@ -52,7 +52,6 @@ export async function createTestHarness(envOverrides: RawEnv = {}): Promise<Test
     db,
     oauth,
     close: async () => {
-      context.externalSync?.stop();
       await app.close();
       db.close();
     },

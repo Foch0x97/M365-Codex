@@ -120,13 +120,6 @@ export interface AppConfig {
   readonly noProxy: string | null;
   readonly oauth: OAuthConfig;
   readonly upstream: UpstreamConfig;
-  /**
-   * 外部账号文件路径（M365 Native 助手写出的 accounts.json）。
-   * 配置后服务会周期性同步其中的 Token，用于账号过期时不中断测试。
-   */
-  readonly externalAccountsFile: string | null;
-  /** 外部账号文件同步间隔，毫秒；0 表示只在启动时同步一次 */
-  readonly externalAccountsSyncIntervalMs: number;
 }
 
 const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
@@ -222,13 +215,6 @@ const envSchema = z.object({
   OAUTH_AUTHORIZE_URL: optionalUrl,
   OAUTH_TOKEN_URL: optionalUrl,
   OAUTH_SCOPES: optionalTrimmed,
-  EXTERNAL_ACCOUNTS_FILE: optionalTrimmed,
-  EXTERNAL_ACCOUNTS_SYNC_INTERVAL_MS: z
-    .string()
-    .optional()
-    .transform((value) => (value === undefined || value.trim() === '' ? 60_000 : Number(value)))
-    .refine((value) => Number.isInteger(value) && value >= 0, { message: '必须是 ≥0 的整数' })
-    .refine((value) => value === 0 || value >= 5_000, { message: '同步间隔至少 5000 毫秒' }),
   UPSTREAM_PATH_TEMPLATE: optionalTrimmed,
   UPSTREAM_PROTOCOL_VERSION: optionalTrimmed,
   UPSTREAM_HEARTBEAT_INTERVAL_MS: positiveIntFromEnv(15_000, 1_000),
@@ -329,8 +315,6 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
       tokenUrl: data.OAUTH_TOKEN_URL ?? DEFAULT_OAUTH_TOKEN_URL,
       scopes: Object.freeze(parseScopes(data.OAUTH_SCOPES)),
     }),
-    externalAccountsFile: data.EXTERNAL_ACCOUNTS_FILE ?? null,
-    externalAccountsSyncIntervalMs: data.EXTERNAL_ACCOUNTS_SYNC_INTERVAL_MS,
     upstream: Object.freeze({
       wsBase: data.UPSTREAM_WS_BASE ?? DEFAULT_UPSTREAM_WS_BASE,
       pathTemplate: data.UPSTREAM_PATH_TEMPLATE ?? DEFAULT_UPSTREAM_PATH_TEMPLATE,
@@ -360,8 +344,6 @@ export function summarizeConfig(config: AppConfig): Record<string, unknown> {
     egressProxyConfigured: config.httpProxy !== null || config.httpsProxy !== null,
     oauthClientId: config.oauth.clientId,
     oauthScopeCount: config.oauth.scopes.length,
-    externalAccountsFileConfigured: config.externalAccountsFile !== null,
-    externalAccountsSyncIntervalMs: config.externalAccountsSyncIntervalMs,
     upstreamWsBase: config.upstream.wsBase,
     upstreamProtocolVersion: config.upstream.protocolVersion,
   };

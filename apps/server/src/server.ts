@@ -46,19 +46,6 @@ async function main(): Promise<void> {
     process.exit(78);
   }
 
-  // 外部账号文件（M365 Native 助手写出的 accounts.json）同步。
-  // 同步失败不阻断启动——账号池为空时接口会返回 account_pool_exhausted，语义更清晰
-  if (context.externalSync !== null) {
-    logger.info(
-      {
-        file: config.externalAccountsFile,
-        interval_ms: config.externalAccountsSyncIntervalMs,
-      },
-      '启用外部账号文件同步',
-    );
-    await context.externalSync.start();
-  }
-
   const app = buildApp(context);
 
   let shuttingDown = false;
@@ -66,7 +53,6 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, '收到退出信号，开始优雅关闭');
-    context.externalSync?.stop();
     void app
       .close()
       .then(() => {

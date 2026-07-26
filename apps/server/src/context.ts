@@ -1,5 +1,4 @@
 import type { Logger } from 'pino';
-import { ExternalAccountSync } from './accounts/externalSync.js';
 import type { AppConfig } from './config/index.js';
 import { Cryptor } from './crypto/index.js';
 import { hashPassword } from './crypto/password.js';
@@ -44,8 +43,6 @@ export interface AppContext {
   readonly responses: ResponsesService;
   readonly responseRepo: ResponseRepository;
   readonly inFlight: InFlightRegistry;
-  /** 仅在配置了 EXTERNAL_ACCOUNTS_FILE 时创建 */
-  readonly externalSync: ExternalAccountSync | null;
   readonly startedAt: number;
 }
 
@@ -107,15 +104,6 @@ export function createContext(options: CreateContextOptions): AppContext {
     responses: responsesService,
     responseRepo,
     inFlight,
-    externalSync:
-      config.externalAccountsFile === null
-        ? null
-        : new ExternalAccountSync({
-            filePath: config.externalAccountsFile,
-            accounts,
-            logger,
-            intervalMs: config.externalAccountsSyncIntervalMs,
-          }),
     startedAt: options.startedAt ?? Date.now(),
   };
 }

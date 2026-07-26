@@ -79,17 +79,20 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 
 ### 2. 用 Docker 运行
 
-镜像发布在 GHCR：
+镜像发布在 **Docker Hub**：`<你的 DockerHub 用户名>/m365-codex`（由 GitHub Actions
+用仓库里配置的 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` / `DOCKERHUB_REPOSITORY` 推送）。
 
 ```bash
-docker pull ghcr.io/foch0x97/m365-codex:0.2.0
+docker pull <你的 DockerHub 用户名>/m365-codex:0.4.0
 ```
 
-标签规则：`main` 与 `sha-<短哈希>` 跟随主分支；`0.2.0` / `0.2` 由版本 tag 产生；
+标签规则：`main` 与 `sha-<短哈希>` 跟随主分支；`0.4.0` / `0.4` 由版本 tag 产生；
 `latest` **只在正式 Release 时移动**。支持 `linux/amd64` 与 `linux/arm64`。
 
 ```bash
-docker compose -f docker/docker-compose.yml up -d
+# 用 compose（把镜像名传给 M365_CODEX_IMAGE）
+M365_CODEX_IMAGE=<你的 DockerHub 用户名>/m365-codex:0.4.0 \
+  docker compose -f docker/docker-compose.yml up -d
 ```
 
 验证：
@@ -143,7 +146,7 @@ wire_api = "responses"           # 只支持 responses，chat 已于 2026-02 移
 | `LOG_PRIVACY_MODE` | 否 | `strict`（默认）/ `metadata` / `debug` |
 | `UPSTREAM_WS_BASE` | 否 | 上游 WebSocket 基址，用于应对端点漂移 |
 | `OAUTH_*` | 否 | OAuth 客户端 ID、端点与 scope，留空使用内置默认值 |
-| `EXTERNAL_ACCOUNTS_FILE` | 否 | 外部账号文件路径，见下节 |
+| `UPSTREAM_*` | 否 | 上游路径模板、协议版本、心跳/超时/重连 |
 
 **严禁**通过环境变量注入任何 Microsoft Token 或 OAuth 凭据。服务启动时会检测常见的注入变量名并拒绝启动；这些凭据只能经 PKCE 授权流程获取，并以 AES-256-GCM 加密入库。
 
@@ -151,49 +154,20 @@ wire_api = "responses"           # 只支持 responses，chat 已于 2026-02 移
 
 ## 添加 Microsoft 账号
 
-### 方式一：管理界面授权（推荐）
+只有一种方式：本网关自己的 **PKCE 授权流程**。
 
 1. 调用 `POST /admin/oauth/authorize-url` 拿到授权链接
 2. 在浏览器打开，选择有 Copilot 权限的账号登录
 3. 登录后会跳到 Microsoft 的 `nativeclient` 提示页，复制地址栏完整 URL
 4. 把它提交给 `POST /admin/oauth/callback`
 
-因为回调落在 Microsoft 自己的页面上，**本服务不需要公网可达**，也不用暴露回调端点。授权会话 10 分钟过期，授权码只能用一次，可以同时为多个账号并行授权。
-
-### 方式二：从 M365 Native 授权助手导入
-
-如果你已经在用本地的 M365 Native PKCE 授权助手，它写出的 `accounts.json` 可以直接导入：
-
-```bash
-curl -X POST http://127.0.0.1:8080/admin/accounts/import \
-  -H "Authorization: Bearer <管理会话令牌>" \
-  -H "Content-Type: application/json" \
-  -d '{"file": "/mnt/m365-native/accounts.json"}'
-```
-
-导入按 `tid + oid` 去重，**只读源文件、绝不写回**，单条损坏不影响其余账号。
-
-### 方式三：跟随外部容器实时同步 Token
-
-若你在 Docker 中跑着持续刷新 Token 的 M365 Native 容器，把它的 `accounts.json` **只读**挂载进本容器：
-
-```yaml
-volumes:
-  - /path/to/m365-native/accounts.json:/mnt/m365-native/accounts.json:ro
-environment:
-  EXTERNAL_ACCOUNTS_FILE: /mnt/m365-native/accounts.json
-  EXTERNAL_ACCOUNTS_SYNC_INTERVAL_MS: "60000"
-```
-
-服务会按文件修改时间变化周期性同步账号池，账号过期不再中断使用。同步状态可通过 `GET /admin/accounts-sync/status` 查询，也可以用 `POST /admin/accounts-sync/run` 手动触发。
+因为回调落在 Microsoft 自己的页面上，**本服务不需要公网可达**，也不用暴露回调端点。授权会话 10 分钟过期，授权码只能用一次，可以同时为多个账号并行授权。授权后本服务用自己保存的 `refresh_token` 独立续期。
 
 ### 账号状态
 
 每个账号处于以下状态之一：`probing`（待探测）、`online`、`busy`、`cooldown`（限流冷却）、`reauth_required`（刷新凭据失效，需重新授权）、`disabled`（人工停用）、`unsupported`（上游能力不满足）、`error`。
 
 刷新凭据失效时账号会自动转入 `reauth_required` 并停止重试；人工停用的账号不会因一次重新授权被悄悄启用。
-
-三种方式的完整说明见 [docs/对接M365-Native授权助手.md](docs/对接M365-Native授权助手.md)。
 
 ---
 
