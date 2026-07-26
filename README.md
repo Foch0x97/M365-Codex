@@ -79,6 +79,15 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 
 ### 2. 用 Docker 运行
 
+镜像发布在 GHCR：
+
+```bash
+docker pull ghcr.io/foch0x97/m365-codex:0.2.0
+```
+
+标签规则：`main` 与 `sha-<短哈希>` 跟随主分支；`0.2.0` / `0.2` 由版本 tag 产生；
+`latest` **只在正式 Release 时移动**。支持 `linux/amd64` 与 `linux/arm64`。
+
 ```bash
 docker compose -f docker/docker-compose.yml up -d
 ```

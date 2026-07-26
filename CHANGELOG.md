@@ -51,9 +51,29 @@
   `OAUTH_AUTHORIZE_URL`、`OAUTH_TOKEN_URL`、`OAUTH_SCOPES`。上游端点会漂移，
   这些一律不硬编码进业务逻辑。HTTP 出口支持 `HTTPS_PROXY` / `HTTP_PROXY`。
 
+### 修复
+
+- **无请求体的 POST 端点返回 415**：不少 HTTP 客户端在 POST 时会自作主张带上
+  `Content-Type`（PowerShell 的 `Invoke-RestMethod` 默认发
+  `application/x-www-form-urlencoded`），Fastify 找不到对应解析器就直接拒绝。
+  现在空请求体按「没有请求体」处理，非空才回 415 并使用统一错误体。
+  该问题在单元测试中不会暴露（`inject` 不带这个头），是本地实跑冒烟发现的。
+- **账号文件带 UTF-8 BOM 时解析失败**：Windows 上的工具常会写入 BOM，现已容忍。
+- **`.gitignore` 的 `accounts/` 规则误伤源码目录**：Git 的目录规则不加前导 `/`
+  会匹配任意层级，把 `apps/server/src/accounts/` 也忽略了。目录规则已锚定到仓库根。
+- **`latest` 标签随版本 tag 自动移动**：`docker/metadata-action` 的默认
+  `flavor: latest=auto` 覆盖了显式规则。已关闭，`latest` 只在正式 Release 时移动。
+
+### 发布
+
+- 新增 GHCR 多架构（amd64 / arm64）镜像发布工作流，Action 全部按 commit SHA 固定，
+  带 provenance 与 SBOM。
+- CI 中「无主密钥拒绝启动」的反向验证并入镜像任务，复用已构建的镜像，
+  少一次构建、少一个网络失败面。
+
 ### 测试
 
-新增 94 个用例（累计 199 个，16 个文件），全部使用模拟上游，不接触真实网络与真实凭据：
+新增 94 个用例（累计 206 个，17 个文件），全部使用模拟上游，不接触真实网络与真实凭据：
 
 - PKCE 参数生成，含 RFC 7636 附录 B 标准测试向量校验
 - 授权码单次消费、并发重放、state 不匹配、会话过期、多会话并行互不干扰
@@ -63,6 +83,7 @@
 - 账号状态机的合法与非法迁移、健康度累计与清零、密文的账号绑定
 - 导入器：去重、身份补齐、损坏条目跳过、源文件逐字节不变、导入结果不含 Token
 - 外部同步：mtime 未变化时跳过、文件损坏时保留已有账号、强制重新导入
+- Content-Type 兜底：空请求体放行、非空且类型不支持时回 415
 
 ---
 
