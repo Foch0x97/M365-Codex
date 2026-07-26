@@ -12,7 +12,54 @@
 
 ### 计划中
 
-- M3：Sydney WebSocket 适配器与账号池调度
+- M4：Responses 非流式 + 流式（SSE）
+
+---
+
+## [0.3.0] - 2026-07-26
+
+里程碑 **M3 · Sydney 适配器 + 账号池调度** 完成（框架 + 模拟上游验证）。
+
+> ⚠️ 真实协议细节依赖 M0 探针实测。本版本按已知的 Sydney/BizChat 协议形态建模，
+> 用模拟 WS 上游测试；协议层已做版本隔离，M0 校准后只需替换 codec，
+> 连接、心跳、调度逻辑不受影响。
+
+### 新增
+
+- **协议层（版本隔离）**：SignalR 风格 JSON 帧 + `0x1e` 记录分隔符的编解码。
+  帧分隔是既定规范；消息内部字段语义抽成 `mapMessageToEvents` 作为 M0 后的替换接缝。
+  codec 通过 `ProtocolCodec` 接口暴露，按 `UPSTREAM_PROTOCOL_VERSION` 选择实现。
+- **帧重组器**：处理 WebSocket 粘包/半包，跨分片重组完整消息，跳过非法帧。
+- **连接层**：单次对话连接的完整生命周期——握手、心跳、空闲超时、取消
+  （`AbortSignal` → 向上游发取消帧）、把原始消息映射为归一化事件。
+  WS 握手阶段的 HTTP 错误（401/403/429）能拿到状态码并分类。
+- **上游端点构造**：`{oid}`/`{tid}` 模板填充 + `access_token` 查询参数；
+  基址、路径全部走配置以应对端点漂移；日志一律经 `redactWsUrl` 脱敏 access_token。
+- **错误分类**：401→刷新重试、403→账号禁用、429→读 Retry-After 冷却、
+  5xx/WS 异常→有限重试可切换、其他 4xx→致命。集中在一处，避免策略散落。
+- **账号池**：带权最少连接选择（连接数→连续失败数→更新时间），冷却期跳过，
+  排除集，请求↔账号粘性，内存并发计数。
+- **调度器**：失败切换状态机——401 刷新一次并在同账号重试；403/429 冷却并切换
+  （不无限切换）；5xx/断开有限重试可切换；致命错误直接失败；
+  所有账号不可用返回 `503 account_pool_exhausted`。
+  「切账号用本地内容重建上下文」：仅在尚未向下游吐出内容时切换/重试，
+  已有内容流出后中途失败如实抛出（干净的断点续传与工具幂等属于 M4/M5）。
+- **配置**：新增 `UPSTREAM_PATH_TEMPLATE`、`UPSTREAM_PROTOCOL_VERSION`、
+  心跳/握手/空闲超时与最大重连次数，全部可配置。
+- **出口代理绑定**：上游 WebSocket 支持通过 `HTTPS_PROXY`/`HTTP_PROXY` 绑定出口。
+
+### 测试
+
+新增 73 个用例（累计 279 个，21 个文件），含用**真实内存 WS 服务器模拟的 Sydney 上游**：
+
+- 协议：切帧、帧重组（粘包/半包/非法帧）、codec 编解码与事件映射
+- 端点：模板填充、URL 编码、端点漂移、access_token 脱敏
+- 错误分类：401/403/429/5xx/4xx、Retry-After（秒数与 HTTP 日期）、WS 关闭码
+- 连接（对模拟上游）：握手→流式→completion、access_token 送达、引用映射、
+  各类 HTTP 错误分类、异常关闭、completion 错误、空闲超时、心跳、取消
+- 账号池：可用性过滤、冷却跳过、带权最少连接、排除、粘性
+- 调度器失败切换：401 刷新重试、429/403 冷却切换、5xx 有限重试、致命不重试、
+  已吐内容后不重复切换、粘性复用、账号池耗尽 503
 
 ---
 
@@ -112,6 +159,7 @@
 - 计划 §5 列出的其余表（`accounts`、`account_tokens`、`responses` 等）留到各自里程碑的迁移中创建，避免提前产生无人使用的空表。
 - SQLite 采用 Node 24 内置的 `node:sqlite` 而非 `better-sqlite3`，以避免原生模块编译，简化多架构镜像构建。
 
-[未发布]: https://github.com/Foch0x97/M365-Codex/compare/v0.2.0...HEAD
+[未发布]: https://github.com/Foch0x97/M365-Codex/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Foch0x97/M365-Codex/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Foch0x97/M365-Codex/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Foch0x97/M365-Codex/releases/tag/v0.1.0

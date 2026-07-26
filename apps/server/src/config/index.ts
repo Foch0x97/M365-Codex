@@ -76,6 +76,33 @@ export const DEFAULT_OAUTH_SCOPES: readonly string[] = [
   'profile',
 ];
 
+/**
+ * Sydney / BizChat 上游 WebSocket 参数。
+ *
+ * 上游端点会漂移（已观察到 substrate.office.com 与 substrate.svc.cloud.microsoft
+ * 两种形态），所以基址、路径模板、协议版本全部走配置。路径模板里的占位符：
+ *   {oid} {tid} 会被替换为账号的对象 ID 与租户 ID。
+ * access_token 通过查询参数附加，不写进模板（避免误入日志）。
+ */
+export interface UpstreamConfig {
+  readonly wsBase: string;
+  readonly pathTemplate: string;
+  /** 协议适配层版本，独立于业务版本；M0 探针确认真实协议后可切换 */
+  readonly protocolVersion: string;
+  /** 心跳间隔（毫秒） */
+  readonly heartbeatIntervalMs: number;
+  /** 握手超时（毫秒） */
+  readonly handshakeTimeoutMs: number;
+  /** 单条消息空闲超时（毫秒）：超过该时间没有任何上游帧则判定卡死 */
+  readonly idleTimeoutMs: number;
+  /** WS 断开后的最大重连次数（同一账号内） */
+  readonly maxReconnects: number;
+}
+
+export const DEFAULT_UPSTREAM_WS_BASE = 'wss://substrate.office.com';
+export const DEFAULT_UPSTREAM_PATH_TEMPLATE = '/m365Copilot/Chathub/{oid}@{tid}';
+export const DEFAULT_UPSTREAM_PROTOCOL_VERSION = 'sydney-json-v1';
+
 export interface AppConfig {
   readonly port: number;
   readonly dataDir: string;
@@ -92,6 +119,7 @@ export interface AppConfig {
   readonly httpsProxy: string | null;
   readonly noProxy: string | null;
   readonly oauth: OAuthConfig;
+  readonly upstream: UpstreamConfig;
   /**
    * 外部账号文件路径（M365 Native 助手写出的 accounts.json）。
    * 配置后服务会周期性同步其中的 Token，用于账号过期时不中断测试。
@@ -201,7 +229,30 @@ const envSchema = z.object({
     .transform((value) => (value === undefined || value.trim() === '' ? 60_000 : Number(value)))
     .refine((value) => Number.isInteger(value) && value >= 0, { message: '必须是 ≥0 的整数' })
     .refine((value) => value === 0 || value >= 5_000, { message: '同步间隔至少 5000 毫秒' }),
+  UPSTREAM_PATH_TEMPLATE: optionalTrimmed,
+  UPSTREAM_PROTOCOL_VERSION: optionalTrimmed,
+  UPSTREAM_HEARTBEAT_INTERVAL_MS: positiveIntFromEnv(15_000, 1_000),
+  UPSTREAM_HANDSHAKE_TIMEOUT_MS: positiveIntFromEnv(15_000, 1_000),
+  UPSTREAM_IDLE_TIMEOUT_MS: positiveIntFromEnv(60_000, 1_000),
+  UPSTREAM_MAX_RECONNECTS: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined || value.trim() === '' ? 2 : Number(value)))
+    .refine((value) => Number.isInteger(value) && value >= 0 && value <= 10, {
+      message: '必须是 0-10 的整数',
+    }),
 });
+
+/** 生成一个「可选正整数、带默认值与下限」的 env 解析器。 */
+function positiveIntFromEnv(defaultValue: number, min: number) {
+  return z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined || value.trim() === '' ? defaultValue : Number(value)))
+    .refine((value) => Number.isInteger(value) && value >= min, {
+      message: `必须是 ≥${min} 的整数`,
+    });
+}
 
 /** scope 允许用空格或逗号分隔，兼容两种常见写法。 */
 function parseScopes(raw: string | undefined): readonly string[] {
@@ -280,6 +331,15 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
     }),
     externalAccountsFile: data.EXTERNAL_ACCOUNTS_FILE ?? null,
     externalAccountsSyncIntervalMs: data.EXTERNAL_ACCOUNTS_SYNC_INTERVAL_MS,
+    upstream: Object.freeze({
+      wsBase: data.UPSTREAM_WS_BASE ?? DEFAULT_UPSTREAM_WS_BASE,
+      pathTemplate: data.UPSTREAM_PATH_TEMPLATE ?? DEFAULT_UPSTREAM_PATH_TEMPLATE,
+      protocolVersion: data.UPSTREAM_PROTOCOL_VERSION ?? DEFAULT_UPSTREAM_PROTOCOL_VERSION,
+      heartbeatIntervalMs: data.UPSTREAM_HEARTBEAT_INTERVAL_MS,
+      handshakeTimeoutMs: data.UPSTREAM_HANDSHAKE_TIMEOUT_MS,
+      idleTimeoutMs: data.UPSTREAM_IDLE_TIMEOUT_MS,
+      maxReconnects: data.UPSTREAM_MAX_RECONNECTS,
+    }),
   });
 }
 
@@ -302,5 +362,7 @@ export function summarizeConfig(config: AppConfig): Record<string, unknown> {
     oauthScopeCount: config.oauth.scopes.length,
     externalAccountsFileConfigured: config.externalAccountsFile !== null,
     externalAccountsSyncIntervalMs: config.externalAccountsSyncIntervalMs,
+    upstreamWsBase: config.upstream.wsBase,
+    upstreamProtocolVersion: config.upstream.protocolVersion,
   };
 }

@@ -4,10 +4,14 @@ import type { AppConfig } from './config/index.js';
 import { Cryptor } from './crypto/index.js';
 import { hashPassword } from './crypto/password.js';
 import type { Database } from './db/index.js';
+import { selectCodec } from './adapter/codecV1.js';
+import type { ProtocolCodec } from './adapter/protocol.js';
 import { HttpOAuthClient, type OAuthClient } from './oauth/client.js';
 import { OAuthService } from './oauth/service.js';
 import { TokenManager } from './oauth/tokenManager.js';
 import { AccountRepository } from './repo/accounts.js';
+import { AccountPool } from './scheduler/accountPool.js';
+import { UpstreamDispatcher } from './scheduler/dispatcher.js';
 import { AdminSessionRepository } from './repo/adminSessions.js';
 import { ApiKeyRepository } from './repo/apiKeys.js';
 import { AuditLogRepository } from './repo/auditLogs.js';
@@ -31,6 +35,9 @@ export interface AppContext {
   readonly oauthClient: OAuthClient;
   readonly oauth: OAuthService;
   readonly tokens: TokenManager;
+  readonly codec: ProtocolCodec;
+  readonly pool: AccountPool;
+  readonly dispatcher: UpstreamDispatcher;
   /** 仅在配置了 EXTERNAL_ACCOUNTS_FILE 时创建 */
   readonly externalSync: ExternalAccountSync | null;
   readonly startedAt: number;
@@ -58,6 +65,19 @@ export function createContext(options: CreateContextOptions): AppContext {
       proxyUrl: config.httpsProxy ?? config.httpProxy,
     });
 
+  const tokens = new TokenManager({ accounts, client: oauthClient, logger });
+  const codec = selectCodec(config.upstream.protocolVersion);
+  const pool = new AccountPool(accounts);
+  const dispatcher = new UpstreamDispatcher({
+    config: config.upstream,
+    codec,
+    accounts,
+    pool,
+    tokens,
+    logger,
+    proxyUrl: config.httpsProxy ?? config.httpProxy,
+  });
+
   return {
     config,
     db,
@@ -71,7 +91,10 @@ export function createContext(options: CreateContextOptions): AppContext {
     oauthSessions,
     oauthClient,
     oauth: new OAuthService({ config: config.oauth, client: oauthClient, sessions: oauthSessions, accounts }),
-    tokens: new TokenManager({ accounts, client: oauthClient, logger }),
+    tokens,
+    codec,
+    pool,
+    dispatcher,
     externalSync:
       config.externalAccountsFile === null
         ? null

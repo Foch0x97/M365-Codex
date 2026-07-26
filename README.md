@@ -5,7 +5,7 @@
 [![CI](https://github.com/Foch0x97/M365-Codex/actions/workflows/ci.yml/badge.svg)](https://github.com/Foch0x97/M365-Codex/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**当前版本：`v0.2.0`（开发中，尚未发布可用版本）**
+**当前版本：`v0.3.0`（开发中，尚未发布可用版本）**
 
 ---
 
@@ -220,7 +220,7 @@ environment:
 | M0 | 上游能力探针（需真实账号，人工执行） | 未开始 |
 | M1 | 工程骨架与安全底座 | ✅ 已完成 |
 | M2 | OAuth（PKCE）与账号健康 | ✅ 已完成 |
-| M3 | Sydney 适配器与账号池调度 | 未开始 |
+| M3 | Sydney 适配器与账号池调度 | ✅ 已完成（框架，待 M0 校准协议） |
 | M4 | Responses 非流式 + 流式 | 未开始 |
 | M5 | 工具调用与完整代理循环 | 未开始 |
 | M6 | 文件/图片/Office-PDF + Chat Completions | 未开始 |
