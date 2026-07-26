@@ -178,7 +178,7 @@ let settings: SettingsResponse = {
   },
   logging: {
     log_privacy_mode: { value: 'strict', source: 'default', editable: true, requires_restart: false },
-    debug_expires_at: { value: null, source: 'default', editable: true, requires_restart: false },
+    debug_expires_at: { value: null, source: 'default', editable: false, requires_restart: false },
   },
   oauth: {
     client_id: { value: 'c0ab8ce9-0000-0000-0000-33d422df41f1', source: 'default', editable: false, requires_restart: true },

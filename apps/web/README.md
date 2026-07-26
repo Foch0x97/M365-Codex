@@ -82,6 +82,24 @@ src/
 
 ## 已知的服务端对齐风险
 
-见本次提交说明里列出的、`docs/管理端API契约.md` 与现有 M1–M2 实现之间可能存在出入的几处接口
-（账号状态变更的路径、OAuth 回调的入参形状等）——服务端实现 M7 部分时请以契约文档为准，
-或者反过来通知前端调整，两边对齐后把这份 README 的这一段删掉。
+WebUI 完全按 `docs/管理端API契约.md` 写（`src/api/client.ts`），但那份契约文档定稿时，
+M1–M2 的账号/OAuth 接口其实已经实现过一版，两边字段有几处对不上。前端已经按**契约文档**实现，
+下面这几处如果服务端保留的是旧实现，需要二选一对齐：
+
+1. **账号状态变更**：契约写的是 `PATCH /admin/accounts/:id`（body `{status}`）；
+   现有 `apps/server/src/routes/accounts.ts` 实现的是 `PATCH /admin/accounts/:id/status`。
+2. **OAuth 回调入参**：契约写的是 `{redirect_url}` 或 `{code, state}`；
+   现有实现读的是 `{callback}`。前端目前发送 `{redirect_url: callbackUrl}`。
+3. **账号视图里的 `proxy_id`**：`src/api/types.ts` 的 `AccountView` 加了这个字段（代理池是
+   M7 才新增的能力，M1–M2 的 `AccountView` 里没有），以及 `POST /admin/accounts/:id/proxy`
+   绑定接口——这两个都还没有服务端实现可以对照，是前端按契约文档 §2.4 推测的形状。
+4. **`/admin/settings` 各分组的具体字段名**：契约文档只给了分组名
+   （`network`/`scheduler`/`logging`/`oauth`/`tools`/`files`），没有列出每个分组下具体有哪些字段。
+   `src/api/types.ts` 里的 `NetworkSettings`/`SchedulerSettings`/... 是前端根据实施计划 §10/§12
+   和 `.env.example` 里的配置项推测出来的字段名，服务端实现时字段名很可能需要调整，
+   前端这边对齐起来只是改 `types.ts` + `SettingsGroupPage` 用到的 `SettingFieldMeta[]`，改动量不大。
+5. **请求/工具调用列表的可空字段**：契约文档没有逐字段标注是否可为 `null`，
+   `src/api/types.ts` 里的 `null` 标注（例如 `account_id`、`api_key_id`）是前端按业务含义推测的，
+   服务端返回形状如果不同，以服务端为准即可，字段名本身不会变。
+
+两边对齐后可以把这一段删掉。
