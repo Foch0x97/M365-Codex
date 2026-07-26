@@ -171,6 +171,9 @@ wire_api = "responses"           # 只支持 responses，chat 已于 2026-02 移
 | `RATE_LIMIT_GLOBAL_*` | 否 | API Key 级限额（RPM/日配额/最大并发）的全局天花板；单个 Key 只能比这更严 |
 | `CLEANUP_*` | 否 | 定时清理的运行间隔与 Response/审计日志/幂等记录的保留期 |
 | `PROXY_CHECK_TIMEOUT_MS` | 否 | 出口代理健康检查超时，默认 `5000` |
+| `METRICS_ENABLED` | 否 | 是否开启 `GET /metrics`，默认 `true` |
+| `METRICS_REQUIRE_AUTH` | 否 | `/metrics` 是否要求管理会话鉴权，默认 `true`（会暴露账号数量与错误分布，不建议无鉴权公开） |
+| `BACKUP_RETENTION_COUNT` | 否 | 备份包保留份数，超过后定时清理删最旧的，默认 `7` |
 
 **严禁**通过环境变量注入任何 Microsoft Token 或 OAuth 凭据。服务启动时会检测常见的注入变量名并拒绝启动；这些凭据只能经 PKCE 授权流程获取，并以 AES-256-GCM 加密入库。
 
@@ -192,6 +195,37 @@ wire_api = "responses"           # 只支持 responses，chat 已于 2026-02 移
 每个账号处于以下状态之一：`probing`（待探测）、`online`、`busy`、`cooldown`（限流冷却）、`reauth_required`（刷新凭据失效，需重新授权）、`disabled`（人工停用）、`unsupported`（上游能力不满足）、`error`。
 
 刷新凭据失效时账号会自动转入 `reauth_required` 并停止重试；人工停用的账号不会因一次重新授权被悄悄启用。
+
+---
+
+## 可观测性与备份恢复
+
+### `GET /metrics`
+
+Prometheus 文本格式，覆盖请求量与耗时（按端点/状态）、上游调用与错误分类、SSE 中断次数、
+工具调用数与轮次、工具参数校验结果（pass/rejected）、Token 刷新结果、账号状态迁移、
+限额拒绝次数，以及抓取时现填的即时值（各状态账号数、当前在途请求数、数据库与文件占用）。
+
+- `METRICS_ENABLED`（默认 `true`）：关闭后端点直接 404，如同不存在；
+- `METRICS_REQUIRE_AUTH`（默认 `true`）：指标会暴露账号数量与错误分布，默认要求管理会话
+  （`Authorization: Bearer <管理令牌>`）；仅在抓取器与本服务处于同一可信内网时才建议关闭。
+
+**隐私红线**：指标里绝不出现邮箱、提示词、输出正文、Token、文件名；标签值统一走字符白名单
+清洗，超长或形似 Token/API Key 的值会被替换或截断。
+
+### 备份与恢复
+
+- `POST /admin/backup`：生成备份包（数据库用 `VACUUM INTO` 出一份一致性快照 + 已上传文件），
+  落到 `<DATA_DIR>/backups/`，返回 `{id, bytes, created_at}`。
+- `GET /admin/backup`：列出已生成的备份包；`GET /admin/backup/:id/download`：下载。
+- `POST /admin/restore`：multipart 上传备份包，校验格式版本、数据库结构版本、主密钥版本
+  一致后写入数据目录——**校验通过只代表已落盘，必须重启服务后才会生效**（正在运行的进程
+  仍持有旧数据库的连接），响应里会明确说明这一点，不会假装恢复已经生效。
+- **主密钥不进备份包**：库里的 Token 仍是密文，换机器恢复时必须提供同一个
+  `M365_CODEX_MASTER_KEY` 才能解密；备份包里只记录密钥版本号用于校验。
+- 备份包按 `BACKUP_RETENTION_COUNT`（默认 7）份定时清理，超出的自动删除最旧的。
+- `GET /admin/diagnostics`：脱敏诊断包——版本、数据库结构版本、账号状态分布、就绪检查、
+  维护任务执行情况、脱敏配置摘要、错误分类计数，供报障时一次性交出。
 
 ---
 

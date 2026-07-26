@@ -56,9 +56,9 @@ export function registerAdminOpsRoutes(app: FastifyInstance, context: AppContext
       failed_last_hour: context.responseRepo.countFailedSince(lastHour),
     };
 
-    const validations = context.metrics.toolArgValidations;
-    const passCount = countMetricSeries(validations, 'pass');
-    const rejectedCount = countMetricSeries(validations, 'rejected');
+    const validationsByResult = context.metrics.toolArgValidations.sumByLabel('result');
+    const passCount = validationsByResult.pass ?? 0;
+    const rejectedCount = validationsByResult.rejected ?? 0;
     const tools = {
       calls_last_hour: context.toolCalls.countCreatedSince(lastHour),
       // 自进程启动以来的通过率（内存计数，重启会归零；见 observability/metrics.ts）
@@ -412,18 +412,6 @@ function readDbBytes(context: AppContext): number {
   } catch {
     return 0;
   }
-}
-
-/** 极简的进程内计数汇总：把某个 Counter 上所有带指定 result 标签值的序列加总。 */
-function countMetricSeries(counter: { render: () => string[] }, result: string): number {
-  const lines = counter.render();
-  let total = 0;
-  for (const line of lines) {
-    if (line.startsWith('#')) continue;
-    const match = /result="([^"]*)"\}\s+(\d+)$/.exec(line);
-    if (match?.[1] === result) total += Number(match[2]);
-  }
-  return total;
 }
 
 /** 系统状态（契约 §2.1）：迁移未完成优先报 migration_failed；账号全不可用报 upstream_unavailable。 */

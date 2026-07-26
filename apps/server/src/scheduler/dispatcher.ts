@@ -13,6 +13,7 @@ import type {
 import { SydneyConnection, type ConnectionDeps } from '../adapter/connection.js';
 import type { AccountRepository } from '../repo/accounts.js';
 import { TokenUnavailableError, type TokenManager } from '../oauth/tokenManager.js';
+import type { Metrics } from '../observability/metrics.js';
 import type { AccountPool } from './accountPool.js';
 
 /**
@@ -78,6 +79,8 @@ export interface DispatcherDeps {
   maxAttempts?: number;
   /** 403 / 429 之外的默认冷却时长（毫秒） */
   defaultCooldownMs?: number;
+  /** M8：上游调用与错误分类打点（§17） */
+  metrics?: Metrics;
 }
 
 export class UpstreamDispatcher {
@@ -145,6 +148,7 @@ export class UpstreamDispatcher {
       attempts += 1;
       state.accountId = account.id;
       pool.acquire(account.id);
+      this.#deps.metrics?.upstreamAttempts.inc({ result: 'started' });
 
       try {
         // 取 Token（必要时刷新）
@@ -209,6 +213,7 @@ export class UpstreamDispatcher {
           }
           // 正常跑完
           this.#deps.accounts.recordSuccess(account.id);
+          this.#deps.metrics?.upstreamAttempts.inc({ result: 'success' });
           return;
         } catch (error) {
           const upstreamError =
@@ -220,6 +225,8 @@ export class UpstreamDispatcher {
                   { cause: error },
                 );
           lastError = upstreamError;
+          this.#deps.metrics?.upstreamAttempts.inc({ result: 'error' });
+          this.#deps.metrics?.upstreamErrors.inc({ disposition: upstreamError.disposition });
 
           // 已经吐过内容就不能干净切换，如实抛出
           if (emittedContent) {

@@ -1,5 +1,6 @@
 import type { Logger } from 'pino';
 import type { AccountRepository } from '../repo/accounts.js';
+import type { Metrics } from '../observability/metrics.js';
 import { OAuthRequestError, type OAuthClient } from './client.js';
 import { computeExpiry } from './service.js';
 
@@ -37,6 +38,8 @@ export interface TokenManagerDeps {
   skewMs?: number;
   /** 按账号解析出口代理，绑定后 Token 刷新走同一个出口（对应实施计划 §13.1）。 */
   resolveProxyForAccount?: (accountId: string) => string | null;
+  /** M8：Token 刷新结果打点（§17） */
+  metrics?: Metrics;
 }
 
 export class TokenManager {
@@ -45,6 +48,7 @@ export class TokenManager {
   readonly #logger: Logger;
   readonly #skewMs: number;
   readonly #resolveProxyForAccount: ((accountId: string) => string | null) | undefined;
+  readonly #metrics: Metrics | undefined;
   /** accountId → 进行中的刷新任务，保证同账号单飞 */
   readonly #inFlight = new Map<string, Promise<string>>();
 
@@ -54,6 +58,7 @@ export class TokenManager {
     this.#logger = deps.logger;
     this.#skewMs = deps.skewMs ?? REFRESH_SKEW_MS;
     this.#resolveProxyForAccount = deps.resolveProxyForAccount;
+    this.#metrics = deps.metrics;
   }
 
   /** 取一个当前可用的 access token，必要时先刷新。 */
@@ -103,6 +108,7 @@ export class TokenManager {
     if (refreshToken === null) {
       // 没有 refresh_token 就无从自动续期，直接要求重新授权
       this.#accounts.forceStatus(accountId, 'reauth_required', now);
+      this.#metrics?.tokenRefresh.inc({ result: 'no_refresh_token' });
       throw new TokenUnavailableError(
         accountId,
         'no_refresh_token',
@@ -126,12 +132,14 @@ export class TokenManager {
       if (account.status === 'error' || account.status === 'cooldown') {
         this.#accounts.forceStatus(accountId, 'probing', now);
       }
+      this.#metrics?.tokenRefresh.inc({ result: 'success' });
       this.#logger.info({ account_id: accountId }, 'Token 刷新成功');
       return tokens.access_token;
     } catch (error) {
       if (error instanceof OAuthRequestError && error.requiresReauth) {
         this.#accounts.forceStatus(accountId, 'reauth_required', now);
         this.#accounts.recordFailure(accountId, error.errorCode, {}, now);
+        this.#metrics?.tokenRefresh.inc({ result: 'reauth_required' });
         this.#logger.warn(
           { account_id: accountId, oauth_error: error.errorCode },
           '刷新凭据已失效，账号转入 reauth_required',
@@ -145,6 +153,7 @@ export class TokenManager {
 
       const errorCode = error instanceof OAuthRequestError ? error.errorCode : 'network_error';
       this.#accounts.recordFailure(accountId, errorCode, {}, now);
+      this.#metrics?.tokenRefresh.inc({ result: 'failure' });
       this.#logger.warn({ account_id: accountId, oauth_error: errorCode }, 'Token 刷新失败');
       throw new TokenUnavailableError(accountId, 'refresh_failed', `Token 刷新失败（${errorCode}）`);
     }

@@ -1,8 +1,9 @@
 import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { packArchive, unpackArchive } from '../src/backup/archive.js';
 
@@ -55,7 +56,7 @@ describe('路径安全', () => {
   it('解包时同样拒绝逃逸路径', () => {
     // 手工造一个带 ../ 的合法 tar：先打包正常路径，再篡改头部里的文件名
     const packed = packArchive([{ path: 'safe/name', content: Buffer.from('x') }], NOW);
-    const raw = require('node:zlib').gunzipSync(packed) as Buffer;
+    const raw = gunzipSync(packed);
     raw.fill(0, 0, 100);
     raw.write('../evil', 0, 100, 'utf8');
     // 重算校验和
@@ -63,7 +64,7 @@ describe('路径安全', () => {
     let checksum = 0;
     for (const byte of raw.subarray(0, 512)) checksum += byte;
     raw.write(`${checksum.toString(8).padStart(7, '0')}\0`, 148, 8, 'ascii');
-    const tampered = require('node:zlib').gzipSync(raw) as Buffer;
+    const tampered = gzipSync(raw);
     expect(() => unpackArchive(tampered)).toThrow(/不合法/);
   });
 });
@@ -98,7 +99,7 @@ describe('与系统 tar 的互操作', () => {
       expect(listing).toContain('files/a/1');
 
       execFileSync('tar', ['-xzf', archivePath, '-C', dir]);
-      const extracted = require('node:fs').readFileSync(join(dir, 'files', 'a', '1'), 'utf8') as string;
+      const extracted = readFileSync(join(dir, 'files', 'a', '1'), 'utf8');
       expect(extracted).toBe('hello');
     } finally {
       rmSync(dir, { recursive: true, force: true });

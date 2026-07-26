@@ -74,6 +74,22 @@ class Counter {
     }
     return lines;
   }
+
+  /**
+   * 按某个标签的取值汇总计数（进程生命周期内累计，重启归零）。
+   * 供 `/admin/overview`（工具通过率）与 `/admin/diagnostics`（错误分类统计）
+   * 这类「已经在打点、不必为了一个概览数字再加一张表」的场景复用。
+   */
+  sumByLabel(labelName: string): Record<string, number> {
+    const out: Record<string, number> = {};
+    const pattern = new RegExp(`(?:^|,)${labelName}="([^"]*)"`);
+    for (const series of this.#series.values()) {
+      const match = pattern.exec(series.labels);
+      if (match?.[1] === undefined) continue;
+      out[match[1]] = (out[match[1]] ?? 0) + series.value;
+    }
+    return out;
+  }
 }
 
 class Histogram {

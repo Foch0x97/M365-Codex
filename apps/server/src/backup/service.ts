@@ -118,7 +118,16 @@ export class BackupService {
    * 因此这里只负责写盘与校验，重启由调用方（管理接口）提示管理员执行。
    */
   restore(archive: Buffer, now = Date.now()): BackupManifest {
-    const entries = unpackArchive(archive);
+    let entries: ArchiveEntry[];
+    try {
+      entries = unpackArchive(archive);
+    } catch (error) {
+      // gzip/tar 解析失败（比如上传了个随便的文件）是用户输入问题，不是服务端故障，
+      // 不能让它变成 500——那样调用方看不出「我传错了」还是「服务坏了」
+      throw ApiError.badRequest(
+        `备份包无法解析（不是合法的 tar.gz）：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     const manifestEntry = entries.find((e) => e.path === 'manifest.json');
     if (manifestEntry === undefined) {
       throw ApiError.badRequest('备份包缺少 manifest.json，不是本项目生成的备份');

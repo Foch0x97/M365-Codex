@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { AccountStatus } from '@m365-codex/shared';
 import type { Cryptor, SealedValue } from '../crypto/index.js';
 import { asRow, asRows, type Database } from '../db/index.js';
+import type { Metrics } from '../observability/metrics.js';
 
 /**
  * 账号与 Token 的数据访问层。
@@ -121,10 +122,13 @@ function toBuffer(value: Uint8Array | null): Buffer | null {
 export class AccountRepository {
   readonly #db: Database;
   readonly #cryptor: Cryptor;
+  /** M8：账号状态迁移打点（§17），可选——不传时（多数单测直接构造本类）静默跳过。 */
+  readonly #metrics: Metrics | undefined;
 
-  constructor(db: Database, cryptor: Cryptor) {
+  constructor(db: Database, cryptor: Cryptor, metrics?: Metrics) {
     this.#db = db;
     this.#cryptor = cryptor;
+    this.#metrics = metrics;
   }
 
   /**
@@ -321,6 +325,7 @@ export class AccountRepository {
       throw new InvalidStateTransitionError(account.status, next);
     }
     this.#db.prepare('UPDATE accounts SET status = ?, updated_at = ? WHERE id = ?').run(next, now, accountId);
+    this.#metrics?.accountStates.inc({ from: account.status, to: next });
     const view = this.getView(accountId);
     if (view === undefined) throw new Error('状态更新后读取失败');
     return view;
@@ -328,7 +333,9 @@ export class AccountRepository {
 
   /** 强制设置状态，绕过状态机。仅用于管理员显式操作，会写审计。 */
   forceStatus(accountId: string, next: AccountStatus, now = Date.now()): AccountView | undefined {
+    const before = this.findById(accountId);
     this.#db.prepare('UPDATE accounts SET status = ?, updated_at = ? WHERE id = ?').run(next, now, accountId);
+    if (before !== undefined) this.#metrics?.accountStates.inc({ from: before.status, to: next });
     return this.getView(accountId);
   }
 

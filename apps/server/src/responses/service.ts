@@ -218,6 +218,7 @@ export class ResponsesService {
 
     let lastAccountId = '';
     let lastConversationRef: string | null = ctx.sticky?.conversationRef ?? null;
+    let finalToolRound = ctx.inherited.round;
 
     try {
       let attempt = 0;
@@ -322,9 +323,10 @@ export class ResponsesService {
             sideEffect: registry.isSideEffect(tc.name),
           });
         }
+        finalToolRound = ctx.inherited.round + 1;
         this.#deps.responses.setToolCounters(
           responseId,
-          ctx.inherited.round + 1,
+          finalToolRound,
           ctx.inherited.total + emitted.length,
         );
         break;
@@ -344,6 +346,11 @@ export class ResponsesService {
           status: 502,
           message: finalStatus.error?.message ?? '上游返回错误',
         });
+      }
+      // 只在链路自然走完时记一次：轮次统计的是「一条对话链最终用了几轮」，
+      // 中途取消/异常不构成一次完整的样本点
+      if (finalStatus.status === 'completed' || finalStatus.status === 'failed') {
+        this.#deps.metrics?.toolRounds.observe(finalToolRound);
       }
       this.#persistFinal(responseId, lastAccountId, lastConversationRef, builder);
     } catch (error) {

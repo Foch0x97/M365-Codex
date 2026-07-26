@@ -177,6 +177,22 @@ export interface CleanupConfig {
   readonly idempotencyRetentionMs: number;
 }
 
+/**
+ * 指标与备份（对应实施计划 §17、§15.4，M8 新增）。
+ *
+ * `metricsRequireAuth` 默认开启：`/metrics` 会暴露账号数量、错误分布这类信息，
+ * 不应该无鉴权公开；显式改为 false 时走无鉴权（适合放进只在内网可达的抓取器）。
+ */
+export interface MetricsConfig {
+  readonly enabled: boolean;
+  readonly requireAuth: boolean;
+}
+
+/** 备份保留份数：`POST /admin/backup` 生成的包超过这个数量后，定时清理会删掉最旧的。 */
+export interface BackupConfig {
+  readonly retentionCount: number;
+}
+
 export interface AppConfig {
   readonly port: number;
   readonly dataDir: string;
@@ -200,6 +216,10 @@ export interface AppConfig {
   readonly cleanup: CleanupConfig;
   /** 出口代理健康检查超时（毫秒，契约 §2.4 `POST /admin/proxies/:id/check`） */
   readonly proxyCheckTimeoutMs: number;
+  /** M8：`/metrics` 端点的开关与鉴权要求 */
+  readonly metrics: MetricsConfig;
+  /** M8：备份保留份数 */
+  readonly backup: BackupConfig;
   /**
    * 启动时原始环境变量里显式出现过的键名（非空值）。
    * `/admin/settings` 据此判断某项是否 `source: "env"`——容器编排是唯一真源，
@@ -359,6 +379,11 @@ const envSchema = z.object({
   CLEANUP_AUDIT_LOG_RETENTION_MS: positiveIntFromEnv(90 * 24 * 60 * 60 * 1000, 60_000),
   CLEANUP_IDEMPOTENCY_RETENTION_MS: positiveIntFromEnv(24 * 60 * 60 * 1000, 60_000),
   PROXY_CHECK_TIMEOUT_MS: positiveIntFromEnv(5_000, 500),
+  // --- 指标与备份（M8，§17、§15.4）---
+  METRICS_ENABLED: booleanFromEnv,
+  // 默认开启：/metrics 会暴露账号数量与错误分布，不应无鉴权公开
+  METRICS_REQUIRE_AUTH: booleanFromEnv,
+  BACKUP_RETENTION_COUNT: positiveIntFromEnv(7, 1),
 });
 
 /** 生成一个「可选正整数、带默认值与下限」的 env 解析器。 */
@@ -491,6 +516,13 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
     envKeysPresent: computeEnvKeysPresent(env),
     upstreamImageInput: data.UPSTREAM_IMAGE_INPUT ?? false,
     contextMaxChars: data.CONTEXT_MAX_CHARS,
+    metrics: Object.freeze({
+      enabled: data.METRICS_ENABLED ?? true,
+      requireAuth: data.METRICS_REQUIRE_AUTH ?? true,
+    }),
+    backup: Object.freeze({
+      retentionCount: data.BACKUP_RETENTION_COUNT,
+    }),
   });
 }
 
@@ -529,5 +561,8 @@ export function summarizeConfig(config: AppConfig): Record<string, unknown> {
     filesMaxTotalBytesPerKey: config.files.maxTotalBytesPerKey,
     upstreamImageInput: config.upstreamImageInput,
     contextMaxChars: config.contextMaxChars,
+    metricsEnabled: config.metrics.enabled,
+    metricsRequireAuth: config.metrics.requireAuth,
+    backupRetentionCount: config.backup.retentionCount,
   };
 }

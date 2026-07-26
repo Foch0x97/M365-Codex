@@ -1,5 +1,7 @@
 import type { Logger } from 'pino';
 import type { AppConfig } from './config/index.js';
+import { BackupService } from './backup/service.js';
+import { BackupStore } from './backup/store.js';
 import { Cryptor } from './crypto/index.js';
 import { hashPassword } from './crypto/password.js';
 import type { Database } from './db/index.js';
@@ -31,6 +33,7 @@ import { Metrics } from './observability/metrics.js';
 import { InFlightRegistry } from './responses/inFlight.js';
 import { ResponsesService } from './responses/service.js';
 import { SettingsService } from './settings/service.js';
+import { APP_VERSION } from './version.js';
 
 /**
  * 运行时上下文：把配置、数据库、加密器、日志与各服务集中传递，
@@ -74,8 +77,12 @@ export interface AppContext {
   readonly settings: SettingsService;
   /** M7：定时清理任务调度（§18），已注册好各清理 job，未 start（由 server.ts 决定何时启动） */
   readonly scheduler: MaintenanceScheduler;
-  /** 指标注册表；M8 会接 /metrics，这里先在关键路径打点 */
+  /** 指标注册表，接了 GET /metrics（M8，§17） */
   readonly metrics: Metrics;
+  /** M8：备份包生成/恢复（§15.4） */
+  readonly backup: BackupService;
+  /** M8：备份包在磁盘上的存放与清理（契约 §三） */
+  readonly backupStore: BackupStore;
   readonly startedAt: number;
 }
 
@@ -93,8 +100,11 @@ export interface CreateContextOptions {
 export function createContext(options: CreateContextOptions): AppContext {
   const { config, db, logger } = options;
   const cryptor = new Cryptor(config.masterKey, config.masterKeyVersion);
+  // 提前构造：账号/Token/调度三层都要接指标（§17），构造时就传进去，
+  // 不必事后再补一层包装
+  const metrics = new Metrics();
 
-  const accounts = new AccountRepository(db, cryptor);
+  const accounts = new AccountRepository(db, cryptor, metrics);
   const oauthSessions = new OAuthSessionRepository(db, cryptor);
   const proxyNodes = new ProxyNodeRepository(db, cryptor);
   const oauthClient =
@@ -112,7 +122,7 @@ export function createContext(options: CreateContextOptions): AppContext {
     return proxyNodes.resolveActiveUrl(account.proxy_node_id);
   };
 
-  const tokens = new TokenManager({ accounts, client: oauthClient, logger, resolveProxyForAccount });
+  const tokens = new TokenManager({ accounts, client: oauthClient, logger, resolveProxyForAccount, metrics });
   const codec = selectCodec(config.upstream.protocolVersion);
   const pool = new AccountPool(accounts);
   const dispatcher = new UpstreamDispatcher({
@@ -124,6 +134,7 @@ export function createContext(options: CreateContextOptions): AppContext {
     logger,
     proxyUrl: config.httpsProxy ?? config.httpProxy,
     resolveProxyForAccount,
+    metrics,
   });
   const responseRepo = new ResponseRepository(db);
   const toolCallRepo = new ToolCallRepository(db);
@@ -131,7 +142,6 @@ export function createContext(options: CreateContextOptions): AppContext {
   const uploadRepo = new UploadRepository(db);
   const fileStorage = new FileStorage(config.dataDir);
   const filesService = new FilesService({ files: fileRepo, storage: fileStorage, config: config.files });
-  const metrics = new Metrics();
   const responsesService = new ResponsesService({
     dispatcher,
     responses: responseRepo,
@@ -150,6 +160,13 @@ export function createContext(options: CreateContextOptions): AppContext {
   const auditLogs = new AuditLogRepository(db);
   const settingsRepo = new SettingsRepository(db);
   const idempotency = new IdempotencyStore(db);
+  const backupService = new BackupService({
+    db,
+    dataDir: config.dataDir,
+    appVersion: APP_VERSION,
+    masterKeyVersion: config.masterKeyVersion,
+  });
+  const backupStore = new BackupStore(config.dataDir);
 
   const scheduler = new MaintenanceScheduler(logger);
   registerMaintenanceJobs(scheduler, {
@@ -163,6 +180,7 @@ export function createContext(options: CreateContextOptions): AppContext {
     fileRepo,
     uploadRepo,
     fileStorage,
+    backupStore,
   });
 
   return {
@@ -198,6 +216,8 @@ export function createContext(options: CreateContextOptions): AppContext {
     settings: new SettingsService({ repo: settingsRepo, config, logger }),
     scheduler,
     metrics,
+    backup: backupService,
+    backupStore,
     startedAt: options.startedAt ?? Date.now(),
   };
 }
@@ -219,6 +239,7 @@ function registerMaintenanceJobs(
     fileRepo: FileRepository;
     uploadRepo: UploadRepository;
     fileStorage: FileStorage;
+    backupStore: BackupStore;
   },
 ): void {
   const interval = deps.config.cleanup.intervalMs;
@@ -266,5 +287,12 @@ function registerMaintenanceJobs(
     name: 'idempotency_keys_cleanup',
     intervalMs: interval,
     run: () => deps.idempotency.purgeOlderThan(Date.now() - deps.config.cleanup.idempotencyRetentionMs),
+  });
+  scheduler.register({
+    name: 'backups_cleanup',
+    intervalMs: interval,
+    // 只保留最近 N 份（§15.4），旧的直接删文件——备份包不进数据库，
+    // 不存在“级联删除”的顾虑
+    run: () => deps.backupStore.prune(deps.config.backup.retentionCount),
   });
 }

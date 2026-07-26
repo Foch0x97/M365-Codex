@@ -3,12 +3,15 @@ import { ApiError, buildErrorBody, REQUEST_ID_HEADER } from '@m365-codex/shared'
 import multipart from '@fastify/multipart';
 import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import type { AppContext } from './context.js';
+import { endpointTagFor } from './gateway/auth.js';
 import { registerAccountRoutes } from './routes/accounts.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerAdminOpsRoutes } from './routes/adminOps.js';
+import { registerBackupRoutes } from './routes/backup.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerMetricsRoutes } from './routes/metrics.js';
 import { registerUiRoutes } from './routes/ui.js';
 import { registerV1Routes } from './routes/v1.js';
 
@@ -41,6 +44,15 @@ export function buildApp(context: AppContext, options: BuildAppOptions = {}): Fa
   // 请求 ID 贯穿响应头与错误体，便于用户报障时定位
   app.addHook('onRequest', async (request, reply) => {
     reply.header(REQUEST_ID_HEADER, request.id);
+  });
+
+  // 请求量与耗时打点（§17）。SSE 响应会 reply.hijack()，hijack 之后 Fastify
+  // 不再管理响应生命周期、onResponse 不会触发——那两条路由自己在流结束时记一次
+  // （见 routes/v1.ts、routes/chat.ts），这里只覆盖未 hijack 的普通请求。
+  app.addHook('onResponse', async (request, reply) => {
+    const endpoint = endpointTagFor(request);
+    context.metrics.requests.inc({ endpoint, status: String(reply.statusCode) });
+    context.metrics.requestDuration.observe(reply.elapsedTime / 1000, { endpoint });
   });
 
   /*
@@ -117,6 +129,8 @@ export function buildApp(context: AppContext, options: BuildAppOptions = {}): Fa
   registerHealthRoutes(app, context);
   registerAdminRoutes(app, context);
   registerAdminOpsRoutes(app, context);
+  registerBackupRoutes(app, context);
+  registerMetricsRoutes(app, context);
   registerAccountRoutes(app, context);
   registerV1Routes(app, context);
   registerFileRoutes(app, context);

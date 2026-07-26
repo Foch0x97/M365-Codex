@@ -1,7 +1,16 @@
 import { Buffer } from 'node:buffer';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BackupService } from '../src/backup/service.js';
 import { packArchive, unpackArchive } from '../src/backup/archive.js';
@@ -81,9 +90,7 @@ describe('生成备份', () => {
 
   it('临时快照文件用完即删，不留在数据目录里', () => {
     service().create();
-    const leftovers = existsSync(join(dir, 'backup-tmp'))
-      ? require('node:fs').readdirSync(join(dir, 'backup-tmp'))
-      : [];
+    const leftovers = existsSync(join(dir, 'backup-tmp')) ? readdirSync(join(dir, 'backup-tmp')) : [];
     expect(leftovers).toHaveLength(0);
   });
 });
@@ -107,7 +114,7 @@ describe('恢复', () => {
   });
 
   it('不是本项目的包直接拒绝', () => {
-    const bogus = require('node:zlib').gzipSync(Buffer.alloc(1024)) as Buffer;
+    const bogus = gzipSync(Buffer.alloc(1024));
     expect(() => service().restore(bogus)).toThrow(/manifest|备份/);
   });
 

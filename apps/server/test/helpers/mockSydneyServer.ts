@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import { once } from 'node:events';
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import { MESSAGE_TYPE, RECORD_SEPARATOR } from '../../src/adapter/protocol.js';
 
 /**
@@ -14,6 +14,8 @@ import { MESSAGE_TYPE, RECORD_SEPARATOR } from '../../src/adapter/protocol.js';
 
 export type MockBehavior =
   | { kind: 'normal'; chunks: string[]; citations?: { url: string; title: string }[] }
+  /** 逐块之间插入延迟，给测试留出「客户端在流未结束前断开」的窗口 */
+  | { kind: 'slow'; chunks: string[]; delayMs: number }
   /** WS 升级阶段直接返回指定 HTTP 状态（401/403/429…） */
   | { kind: 'http-status'; status: number; retryAfter?: string }
   /** 握手后异常关闭 */
@@ -155,6 +157,24 @@ export async function startMockSydneyServer(initial: MockBehavior): Promise<Mock
       case 'tool-call-repair': {
         const args = invocationCount === 1 ? behavior.badArgs : behavior.goodArgs;
         sendToolCall(ws, invocationId, behavior.callId, behavior.name, args);
+        break;
+      }
+      case 'slow': {
+        // 提前存一份到局部变量：下面的 await 会让 TS 认为可变的外层 `behavior`
+        // 在恢复执行时可能已被 setBehavior 重新赋值，从而丢失窄化
+        const slow = behavior;
+        for (const chunk of slow.chunks) {
+          await new Promise((resolve) => setTimeout(resolve, slow.delayMs));
+          if (ws.readyState !== WebSocket.OPEN) return; // 客户端已经断开，别再往关闭的连接上写
+          ws.send(
+            frame({
+              type: MESSAGE_TYPE.STREAM_ITEM,
+              invocationId,
+              arguments: [{ messages: [{ author: 'bot', text: chunk, messageType: 'Chat' }] }],
+            }),
+          );
+        }
+        if (ws.readyState === WebSocket.OPEN) ws.send(frame({ type: MESSAGE_TYPE.COMPLETION, invocationId }));
         break;
       }
       case 'normal': {
