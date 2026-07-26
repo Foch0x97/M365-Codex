@@ -14,11 +14,6 @@ const SCRYPT_P = 1;
 const KEY_LENGTH = 64;
 const SALT_BYTES = 16;
 
-export interface PasswordHash {
-  /** 形如 `scrypt$16384$8$1$<saltB64>$<hashB64>` */
-  encoded: string;
-}
-
 export function hashPassword(password: string): string {
   const salt = randomBytes(SALT_BYTES);
   const derived = scryptSync(password, salt, KEY_LENGTH, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
