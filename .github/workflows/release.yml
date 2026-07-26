@@ -46,6 +46,10 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # 关掉默认的 latest=auto：它会给任何 semver tag 自动打 latest，
+          # 而本项目要求 latest 只在正式 Release 时移动（见实施计划 §M9）
+          flavor: |
+            latest=false
           tags: |
             type=ref,event=branch
             type=sha,prefix=sha-
