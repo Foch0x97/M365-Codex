@@ -184,11 +184,89 @@ ALTER TABLE responses ADD COLUMN tool_round INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE responses ADD COLUMN tool_calls_total INTEGER NOT NULL DEFAULT 0;
 `;
 
+const M005_FILES_UPLOADS = `
+-- 文件元数据（对应实施计划 §11、§M6）。磁盘上只按 file-id 建目录存内容，
+-- 文件名（filename）只入库、绝不直接拼进磁盘路径。
+-- status：processed（已按能力提取或明确判定不可提取）/ error（提取失败）。
+-- extracted_text 为空且 status=processed 时，表示"已识别但明确不做提取"
+-- （如未识别的二进制、图片），extraction_note 说明原因，不是出错。
+CREATE TABLE files (
+  id               TEXT PRIMARY KEY,
+  api_key_id       TEXT NOT NULL REFERENCES api_keys (id) ON DELETE CASCADE,
+  filename         TEXT NOT NULL,
+  purpose          TEXT NOT NULL,
+  mime_type        TEXT NOT NULL,
+  kind             TEXT NOT NULL,
+  bytes            INTEGER NOT NULL,
+  sha256           TEXT NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'processed',
+  extracted_text   TEXT,
+  extraction_note  TEXT,
+  created_at       INTEGER NOT NULL,
+  expires_at       INTEGER,
+  deleted_at       INTEGER
+);
+CREATE INDEX idx_files_api_key ON files (api_key_id);
+CREATE INDEX idx_files_expires_at ON files (expires_at);
+
+-- 分片上传（Uploads API）。状态流转：pending -> completed / cancelled / expired。
+-- 完成后 file_id 指向拼装出的 files 行；取消或过期时清理磁盘上已收到的分片。
+CREATE TABLE uploads (
+  id          TEXT PRIMARY KEY,
+  api_key_id  TEXT NOT NULL REFERENCES api_keys (id) ON DELETE CASCADE,
+  filename    TEXT NOT NULL,
+  purpose     TEXT NOT NULL,
+  mime_type   TEXT NOT NULL,
+  bytes       INTEGER NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending',
+  file_id     TEXT REFERENCES files (id),
+  created_at  INTEGER NOT NULL,
+  expires_at  INTEGER NOT NULL
+);
+CREATE INDEX idx_uploads_api_key ON uploads (api_key_id);
+CREATE INDEX idx_uploads_status_expires ON uploads (status, expires_at);
+
+-- 分片：每个 part 落一份独立磁盘文件（<DATA_DIR>/files/uploads/<upload-id>/<part-id>），
+-- complete 时按 part_ids 给定的顺序拼接。part_number 只用于同一 upload 内去重与追踪。
+CREATE TABLE upload_parts (
+  id           TEXT PRIMARY KEY,
+  upload_id    TEXT NOT NULL REFERENCES uploads (id) ON DELETE CASCADE,
+  part_number  INTEGER NOT NULL,
+  bytes        INTEGER NOT NULL,
+  created_at   INTEGER NOT NULL,
+  UNIQUE (upload_id, part_number)
+);
+`;
+
+const M006_IDEMPOTENCY = `
+-- 请求幂等（对应实施计划 §18）。
+-- 主键是 (key, api_key_id, endpoint) 三元组：幂等键的作用域限定在单个 API Key
+-- 与单个端点内，不同 Key 用同一个字符串互不干扰。
+-- request_fingerprint 存请求体的稳定哈希：同一把键配不同请求体属于客户端用错键，
+-- 必须报错，而不是把两个不同请求当成同一个。
+CREATE TABLE idempotency_keys (
+  key                 TEXT NOT NULL,
+  api_key_id          TEXT NOT NULL REFERENCES api_keys (id) ON DELETE CASCADE,
+  endpoint            TEXT NOT NULL,
+  request_fingerprint TEXT NOT NULL,
+  state               TEXT NOT NULL DEFAULT 'in_progress',
+  response_id         TEXT,
+  status_code         INTEGER,
+  body                TEXT,
+  created_at          INTEGER NOT NULL,
+  updated_at          INTEGER NOT NULL,
+  PRIMARY KEY (key, api_key_id, endpoint)
+);
+CREATE INDEX idx_idempotency_created_at ON idempotency_keys (created_at);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'core_settings_apikeys_admin_audit', sql: M001_CORE },
   { version: 2, name: 'accounts_tokens_health_oauth_sessions', sql: M002_ACCOUNTS },
   { version: 3, name: 'responses_conversation_bindings', sql: M003_RESPONSES },
   { version: 4, name: 'tool_calls', sql: M004_TOOL_CALLS },
+  { version: 5, name: 'files_uploads', sql: M005_FILES_UPLOADS },
+  { version: 6, name: 'idempotency_keys', sql: M006_IDEMPOTENCY },
 ];
 
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(

@@ -1,0 +1,30 @@
+{
+  "name": "@m365-codex/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "M365-Codex 管理 WebUI（独立子包，不进入根 workspace，由服务端静态托管挂载在 /ui/ 下）",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router": "^8.3.0"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.0.4",
+    "jsdom": "^27.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^7.1.7",
+    "vitest": "^3.2.4"
+  }
+}
