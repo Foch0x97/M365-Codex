@@ -63,9 +63,37 @@ Codex Cloud 云端任务、云端代码审查与云端 GitHub 集成、OpenAI �
 
 ---
 
+## ⚠️ 账号前提（先确认，否则后面全是白做）
+
+本项目把**付费版 Microsoft 365 Copilot** 当作上游。你的账号必须**已分配 Copilot 许可**。
+
+**E3 / A3 / E5 / A5 这些基础订阅本身不含 Copilot**——Copilot 是要在基础订阅之上
+单独购买、单独分配的**加载项**。只有基础订阅时，上游会在业务层明确拒绝：
+
+```json
+{"value":"ForbiddenRequest","errorCode":"InvalidCopilotLicense",
+ "message":"It looks like you don't have a valid license. To get access, please check with your administrator."}
+```
+
+这个拒绝**发生在协议全部正确之后**——OAuth 授权能成功、token 的 audience 与 scope
+全对、WebSocket 握手能通、请求体能被正确解析并回显。所以"能登录、能刷 token"
+完全不代表能用，别拿这个当验证通过的标志。
+
+另外注意两件容易混淆的事：
+
+- **Copilot Chat（免费层）** 与本项目对接的付费 Copilot 是**不同的服务**，端点也不同，
+  有前者不等于能用本项目。
+- **区域限制独立存在**：即使有许可，Copilot 在部分地区不提供服务，且判定跟随**租户
+  注册地**而非你的出口 IP——**挂代理没有用**。
+
+怎么确认：管理中心 → 用户 → 许可证，看是否有单独一条 "Microsoft 365 Copilot"
+（教育版为对应的 A 系列 SKU）。只有 E3/A3 而没有这一条，就是缺加载项。
+
+---
+
 ## 快速开始
 
-> 前置条件：一个可用的 Microsoft 365 Copilot 账号（授权步骤在管理界面完成）。
+> 前置条件：一个**已分配 Copilot 许可**的 Microsoft 365 账号（授权步骤在管理界面完成）。
 
 ### 1. 准备环境变量
 
