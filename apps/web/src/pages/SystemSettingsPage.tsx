@@ -13,8 +13,9 @@ export function SystemSettingsPage() {
             { key: 'public_api_base_url', label: '对外 API Base URL', kind: 'string', hint: '用于 WebUI 展示、Codex 配置生成、调用示例。' },
             { key: 'public_admin_url', label: '管理界面公开地址', kind: 'string' },
             { key: 'trust_proxy', label: '信任反向代理头', kind: 'boolean', hint: '启用后才信任 Forwarded / X-Forwarded-*。' },
-            { key: 'port', label: '监听端口', kind: 'number' },
-            { key: 'data_dir', label: '数据目录', kind: 'string' },
+            { key: 'http_proxy', label: 'HTTP 代理地址', kind: 'string', hint: '出站 HTTP 请求使用的代理，留空表示不使用。' },
+            { key: 'https_proxy', label: 'HTTPS 代理地址', kind: 'string', hint: '出站 HTTPS 请求使用的代理，留空表示不使用。' },
+            { key: 'no_proxy', label: '代理排除列表', kind: 'string', hint: '逗号分隔的主机名，命中的地址不走上面两个代理。' },
           ],
         },
         {
@@ -22,7 +23,7 @@ export function SystemSettingsPage() {
           heading: '工具调用',
           fields: [
             {
-              key: 'tools_mode',
+              key: 'mode',
               label: '工具调用方式',
               kind: 'select',
               options: [
@@ -33,9 +34,17 @@ export function SystemSettingsPage() {
             },
             { key: 'max_calls_per_round', label: '每轮最大调用数', kind: 'number' },
             { key: 'max_rounds', label: '最大轮次', kind: 'number' },
-            { key: 'max_calls_total', label: '累计最大调用数', kind: 'number' },
+            { key: 'max_total_calls', label: '累计最大调用数', kind: 'number' },
             { key: 'max_result_bytes', label: '单次结果最大字节数', kind: 'number' },
-            { key: 'max_repair_attempts', label: '参数修复最大次数', kind: 'number', hint: '上限锁死为 2，即使这里填更大的值也不会生效。' },
+            {
+              key: 'max_arg_repairs',
+              label: '参数修复最大次数',
+              kind: 'number',
+              min: 0,
+              max: 2,
+              hint: '协议规则封顶 2 次，界面上也限制在 0-2 之间，填更大的值服务端会拒绝。',
+            },
+            { key: 'allow_parallel', label: '允许并行工具调用', kind: 'boolean', hint: '同一轮内是否允许多个工具调用并发执行。' },
           ],
         },
         {
@@ -44,7 +53,7 @@ export function SystemSettingsPage() {
           fields: [
             { key: 'max_file_bytes', label: '单文件最大字节数', kind: 'number' },
             { key: 'max_request_bytes', label: '单请求最大字节数', kind: 'number' },
-            { key: 'retention_hours', label: '文件保留时长（小时）', kind: 'number', hint: '超过后由过期清理任务自动删除。' },
+            { key: 'max_total_bytes_per_key', label: '每个 API Key 累计最大字节数', kind: 'number', hint: '同一个 Key 名下所有未过期文件的总大小上限。' },
           ],
         },
       ]}

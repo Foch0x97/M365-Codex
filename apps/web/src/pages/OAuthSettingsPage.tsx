@@ -14,7 +14,7 @@ export function OAuthSettingsPage() {
             { key: 'redirect_uri', label: '回调地址', kind: 'string', hint: '回调落在 Microsoft 自己的页面上，本服务不需要公网可达。' },
             { key: 'authorize_url', label: '授权端点', kind: 'string' },
             { key: 'token_url', label: 'Token 端点', kind: 'string' },
-            { key: 'scopes', label: 'Scope（空格分隔）', kind: 'string' },
+            { key: 'scopes', label: 'Scope（空格分隔）', kind: 'string_list' },
           ],
         },
       ]}

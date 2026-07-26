@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, type SettingsGroupName, type SettingsResponse } from '../api';
-import { formatDateTime } from '../util/format';
+import { formatDateTime, formatMsWithDuration } from '../util/format';
 import { ErrorBanner } from './ErrorBanner';
 import { Layout } from './Layout';
 import { AsyncSection } from './StateBlock';
@@ -8,9 +8,13 @@ import { AsyncSection } from './StateBlock';
 export interface SettingFieldMeta {
   key: string;
   label: string;
-  kind: 'boolean' | 'number' | 'string' | 'select' | 'datetime';
+  kind: 'boolean' | 'number' | 'string' | 'select' | 'datetime' | 'string_list';
   options?: { value: string; label: string }[];
   hint?: string;
+  /** 数字字段的展示单位：'ms' 时在输入框旁附带「N 毫秒（X 天/小时/分钟）」的人话展示，提交值仍是毫秒数。 */
+  unit?: 'ms';
+  min?: number;
+  max?: number;
 }
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -95,18 +99,24 @@ function SettingsGroupCard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [restartNeeded, setRestartNeeded] = useState(false);
 
   const handleSubmit = () => {
     setSaving(true);
     setError(null);
     const changed: Record<string, unknown> = {};
+    let needsRestart = false;
     for (const f of fields) {
-      if (values[f.key]?.editable === true) changed[f.key] = draft[f.key];
+      if (values[f.key]?.editable === true) {
+        changed[f.key] = draft[f.key];
+        if (values[f.key]?.requires_restart === true) needsRestart = true;
+      }
     }
     api
       .updateSettings(group, changed)
       .then(() => {
         setSavedAt(Date.now());
+        setRestartNeeded(needsRestart);
         onSaved();
       })
       .catch((err: unknown) => setError(err))
@@ -119,6 +129,11 @@ function SettingsGroupCard({
         <h2 style={{ margin: 0 }}>{heading}</h2>
         {savedAt !== null && <span className="text-faint">已保存于 {formatDateTime(savedAt)}</span>}
       </div>
+      {savedAt !== null && restartNeeded && (
+        <div className="field-hint" style={{ marginBottom: 12 }}>
+          <span className="badge badge-warn">重启后生效</span> 本次改动含需要重启的配置项，重启进程前仍按旧值运行。
+        </div>
+      )}
       {fields.map((f) => {
         const meta = values[f.key];
         const editable = meta?.editable ?? false;
@@ -142,9 +157,12 @@ function SettingsGroupCard({
               disabled={!editable}
               onChange={(v) => setDraft((d) => ({ ...d, [f.key]: v }))}
             />
+            {f.unit === 'ms' && <span className="field-hint">{formatMsWithDuration(draft[f.key])}</span>}
             {!editable && (
               <span className="field-hint">
-                {meta?.source === 'env' ? '由环境变量固定，界面上不可修改。' : '当前不可在界面修改。'}
+                {meta?.source === 'env'
+                  ? '由环境变量固定，改这里不会生效。'
+                  : '当前不可在界面修改。'}
               </span>
             )}
             {f.hint !== undefined && <span className="field-hint">{f.hint}</span>}
@@ -211,9 +229,40 @@ function SettingInput({
       <input
         id={id}
         type="number"
+        min={meta.min}
+        max={meta.max}
         value={value === null || value === undefined ? '' : String(value)}
         disabled={disabled}
-        onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
+        onChange={(e) => {
+          if (e.target.value === '') {
+            onChange(null);
+            return;
+          }
+          let next = Number(e.target.value);
+          if (meta.min !== undefined && next < meta.min) next = meta.min;
+          if (meta.max !== undefined && next > meta.max) next = meta.max;
+          onChange(next);
+        }}
+      />
+    );
+  }
+  if (meta.kind === 'string_list') {
+    // 服务端类型是字符串数组，界面按空格分隔的单行文本编辑，提交前再切回数组。
+    const text = Array.isArray(value) ? value.join(' ') : '';
+    return (
+      <input
+        id={id}
+        type="text"
+        value={text}
+        disabled={disabled}
+        onChange={(e) =>
+          onChange(
+            e.target.value
+              .split(/\s+/)
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0),
+          )
+        }
       />
     );
   }

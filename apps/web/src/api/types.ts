@@ -239,19 +239,25 @@ export interface NetworkSettings {
   public_api_base_url: SettingItem<string>;
   public_admin_url: SettingItem<string>;
   trust_proxy: SettingItem<boolean>;
-  port: SettingItem<number>;
-  data_dir: SettingItem<string>;
+  http_proxy: SettingItem<string>;
+  https_proxy: SettingItem<string>;
+  no_proxy: SettingItem<string>;
 }
 
+/** 全部是清理任务的间隔/保留时长，单位毫秒（对应服务端 cleanup 调度器）。 */
 export interface SchedulerSettings {
-  sticky_account: SettingItem<boolean>;
-  retry_limit: SettingItem<number>;
-  cooldown_seconds: SettingItem<number>;
+  cleanup_interval_ms: SettingItem<number>;
+  response_retention_ms: SettingItem<number>;
+  audit_log_retention_ms: SettingItem<number>;
+  idempotency_retention_ms: SettingItem<number>;
+  files_retention_ms: SettingItem<number>;
+  files_upload_ttl_ms: SettingItem<number>;
 }
 
 export interface LoggingSettings {
+  /** 唯一 requires_restart=false 的设置项：保存后立即热生效。 */
+  log_level: SettingItem<string>;
   log_privacy_mode: SettingItem<'strict' | 'metadata' | 'debug'>;
-  debug_expires_at: SettingItem<number | null>;
 }
 
 export interface OAuthSettings {
@@ -259,22 +265,25 @@ export interface OAuthSettings {
   redirect_uri: SettingItem<string>;
   authorize_url: SettingItem<string>;
   token_url: SettingItem<string>;
-  scopes: SettingItem<string>;
+  /** 服务端类型是 string_list：多个 scope 用空格分隔展示/编辑。 */
+  scopes: SettingItem<string[]>;
 }
 
 export interface ToolsSettings {
-  tools_mode: SettingItem<'native' | 'prompt' | 'auto'>;
+  mode: SettingItem<'native' | 'prompt' | 'auto'>;
   max_calls_per_round: SettingItem<number>;
   max_rounds: SettingItem<number>;
-  max_calls_total: SettingItem<number>;
+  max_total_calls: SettingItem<number>;
   max_result_bytes: SettingItem<number>;
-  max_repair_attempts: SettingItem<number>;
+  /** 协议规则封顶 2，服务端会拒绝更大的值。 */
+  max_arg_repairs: SettingItem<number>;
+  allow_parallel: SettingItem<boolean>;
 }
 
 export interface FilesSettings {
   max_file_bytes: SettingItem<number>;
   max_request_bytes: SettingItem<number>;
-  retention_hours: SettingItem<number>;
+  max_total_bytes_per_key: SettingItem<number>;
 }
 
 export interface SettingsResponse {

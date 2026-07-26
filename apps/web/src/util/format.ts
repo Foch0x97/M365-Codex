@@ -47,6 +47,12 @@ export function formatDuration(ms: number | null | undefined): string {
   return parts.join(' ');
 }
 
+/** 毫秒字段的人类可读展示，例如 `2592000000 毫秒（30 天）`；输入框仍按毫秒提交，这里只是辅助阅读。 */
+export function formatMsWithDuration(ms: unknown): string {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return '—';
+  return `${ms} 毫秒（${formatDuration(ms)}）`;
+}
+
 export function formatPercent(ratio: number | null | undefined, digits = 1): string {
   if (ratio === null || ratio === undefined || Number.isNaN(ratio)) return '—';
   return `${(ratio * 100).toFixed(digits)}%`;
