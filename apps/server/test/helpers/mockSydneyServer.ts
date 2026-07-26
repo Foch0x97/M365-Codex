@@ -7,7 +7,11 @@ import { MESSAGE_TYPE, RECORD_SEPARATOR } from '../../src/adapter/protocol.js';
  * 模拟 Sydney / BizChat WebSocket 上游（对应实施计划 §8 的「模拟 Sydney WS 上游」）。
  *
  * 说话方式与真实上游一致：SignalR JSON 帧 + 0x1e 分隔、握手 ack、流式回若干帧、
- * completion 收尾。可通过 behavior 注入各种异常，用于测试连接层与调度器的处置。
+ * completion 收尾。字段形态对齐 2026-07-27 用真实账号跑通的 M0 校准结果——
+ * 请求侧 `arguments[0].message` 是单数对象，响应侧业务负载在 `item` 字段里
+ * （`item.messages[]` / `item.result`），不是旧版建模的 `arguments[0].messages[]`
+ * （详见 `src/adapter/codecV1.ts` 顶部注释）。可通过 behavior 注入各种异常，
+ * 用于测试连接层与调度器的处置。
  *
  * 绝不涉及真实网络或真实凭据。
  */
@@ -116,9 +120,9 @@ export async function startMockSydneyServer(initial: MockBehavior): Promise<Mock
         }
 
         if (msg.type === MESSAGE_TYPE.STREAM_INVOCATION || msg.type === MESSAGE_TYPE.INVOCATION) {
-          const arg = (msg.arguments?.[0] ?? {}) as { messages?: { text?: string; author?: string }[] };
-          const userMsg = arg.messages?.find((m) => m.author === 'user');
-          state.invocationTexts.push(userMsg?.text ?? '');
+          // 真实请求形态：arguments[0].message 是单数对象，不是 messages 数组
+          const arg = (msg.arguments?.[0] ?? {}) as { message?: { text?: string; author?: string } };
+          state.invocationTexts.push(arg.message?.text ?? '');
           state.invocationCount += 1;
           void runBehavior(ws, msg.invocationId ?? 'inv', state.invocationCount);
         }
@@ -126,14 +130,14 @@ export async function startMockSydneyServer(initial: MockBehavior): Promise<Mock
     });
   });
 
+  function sendItem(ws: WebSocket, invocationId: string, item: Record<string, unknown>): void {
+    ws.send(frame({ type: MESSAGE_TYPE.STREAM_ITEM, invocationId, item }));
+  }
+
   function sendToolCall(ws: WebSocket, invocationId: string, callId: string, name: string, args: string): void {
-    ws.send(
-      frame({
-        type: MESSAGE_TYPE.STREAM_ITEM,
-        invocationId,
-        arguments: [{ messages: [{ author: 'bot', toolCalls: [{ callId, name, arguments: args }] }] }],
-      }),
-    );
+    sendItem(ws, invocationId, {
+      messages: [{ author: 'bot', toolCalls: [{ callId, name, arguments: args }] }],
+    });
     ws.send(frame({ type: MESSAGE_TYPE.COMPLETION, invocationId }));
   }
 
@@ -144,13 +148,7 @@ export async function startMockSydneyServer(initial: MockBehavior): Promise<Mock
         break;
       }
       case 'tool-calls': {
-        ws.send(
-          frame({
-            type: MESSAGE_TYPE.STREAM_ITEM,
-            invocationId,
-            arguments: [{ messages: [{ author: 'bot', toolCalls: behavior.calls }] }],
-          }),
-        );
+        sendItem(ws, invocationId, { messages: [{ author: 'bot', toolCalls: behavior.calls }] });
         ws.send(frame({ type: MESSAGE_TYPE.COMPLETION, invocationId }));
         break;
       }
@@ -166,13 +164,7 @@ export async function startMockSydneyServer(initial: MockBehavior): Promise<Mock
         for (const chunk of slow.chunks) {
           await new Promise((resolve) => setTimeout(resolve, slow.delayMs));
           if (ws.readyState !== WebSocket.OPEN) return; // 客户端已经断开，别再往关闭的连接上写
-          ws.send(
-            frame({
-              type: MESSAGE_TYPE.STREAM_ITEM,
-              invocationId,
-              arguments: [{ messages: [{ author: 'bot', text: chunk, messageType: 'Chat' }] }],
-            }),
-          );
+          sendItem(ws, invocationId, { messages: [{ author: 'bot', text: chunk, messageType: 'Chat' }] });
         }
         if (ws.readyState === WebSocket.OPEN) ws.send(frame({ type: MESSAGE_TYPE.COMPLETION, invocationId }));
         break;
@@ -190,21 +182,13 @@ export async function startMockSydneyServer(initial: MockBehavior): Promise<Mock
               providerDisplayName: c.title,
             }));
           }
-          ws.send(
-            frame({ type: MESSAGE_TYPE.STREAM_ITEM, invocationId, arguments: [{ messages: [message] }] }),
-          );
+          sendItem(ws, invocationId, { messages: [message] });
         }
         ws.send(frame({ type: MESSAGE_TYPE.COMPLETION, invocationId }));
         break;
       }
       case 'throttle': {
-        ws.send(
-          frame({
-            type: MESSAGE_TYPE.STREAM_ITEM,
-            invocationId,
-            arguments: [{ result: { value: 'Throttled', message: '触发限流' } }],
-          }),
-        );
+        sendItem(ws, invocationId, { result: { value: 'Throttled', message: '触发限流' } });
         ws.send(frame({ type: MESSAGE_TYPE.COMPLETION, invocationId }));
         break;
       }

@@ -191,6 +191,7 @@ export class UpstreamDispatcher {
             invocationId,
             text: request.text,
             conversationRef: state.conversationRef ?? undefined,
+            oid: account.oid,
             passthrough: request.passthrough,
             tools: request.tools,
             toolResults: request.toolResults,

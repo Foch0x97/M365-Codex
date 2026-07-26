@@ -5,11 +5,12 @@
  * `0x1e`（RS）结尾。握手后客户端发起一次 invocation，服务端流式回若干帧，
  * 最后给出 completion。
  *
- * ⚠️ 重要：帧分隔（0x1e）是 SignalR 既定规范，稳定可依赖；但**消息内部的字段
- * 语义**（哪个字段装增量文本、引用、思考摘要）依赖 M0 探针对真实上游的实测。
- * 因此本模块把「解析出的原始消息 → 归一化事件」这一步单独抽成
- * `mapMessageToEvents`，作为 M0 之后替换的接缝。整个 codec 通过
- * `ProtocolCodec` 接口暴露，可按 `protocolVersion` 切换不同实现。
+ * 帧分隔（0x1e）是 SignalR 既定规范，稳定可依赖。**消息内部的字段语义**已在
+ * 2026-07-27 用真实账号跑通 M0 校准：请求侧是单数 `message` 对象（不是
+ * `messages` 数组），响应侧的业务负载在 `item` 字段里（不是 `arguments[0]`）——
+ * 详见 `codecV1.ts` 顶部注释与 `docs/里程碑进度.md` 的 M0 一节。这一步仍单独
+ * 抽成 `mapMessageToEvents`，作为未来上游协议再次漂移时的替换接缝；整个 codec
+ * 通过 `ProtocolCodec` 接口暴露，可按 `protocolVersion` 切换不同实现。
  */
 
 /** 记录分隔符：SignalR JSON 协议每条消息以它结尾。 */
@@ -69,12 +70,14 @@ export interface ToolResultInput {
 /**
  * 图片输入的建模字段（M6，`UPSTREAM_IMAGE_INPUT=true` 时生效）。
  *
- * ⚠️ 待 M0 校准：上游是否接受图片、字段叫什么、放在 invocation 的哪个位置，
- * 目前完全未知。这里先定义一个我们自己的约定形态，通过 `InvocationInput.passthrough`
- * 这条既有的透传通道送到 `encodeInvocation`（`model`/`reasoning`/`temperature` 等
- * 已经在走这条通道）——因为 `scheduler/dispatcher.ts` 已冻结、不接受新增顶层字段，
- * 复用 passthrough 是当前唯一能不改调度层就把新字段送到线协议层的办法。
- * M0 探针拿到真实协议后，再决定是保留这个约定还是替换成上游实际要求的形态。
+ * ⚠️ 仍待校准：M0 真实探测证实了文本 invocation 的字段形态（见 `codecV1.ts`），
+ * 但受限于测试账号的 Copilot 许可证状态（实测走到 `InternalError`/
+ * `InvalidCopilotLicense`，未能拿到一次成功生成），没能进一步验证图片输入的
+ * 真实字段名与位置。这里继续沿用「通过 `InvocationInput.passthrough` 透传」的
+ * 既有约定（`model`/`reasoning`/`temperature` 等已经在走这条通道）——因为
+ * `scheduler/dispatcher.ts` 已冻结、不接受新增顶层字段，复用 passthrough 是
+ * 当前唯一能不改调度层就把新字段送到线协议层的办法。等拿到一个有效许可证的
+ * 账号能跑通真实图片输入后，再决定是保留这个约定还是替换成上游实际要求的形态。
  */
 export interface ImageInputDescriptor {
   /** 图片 URL，或按 file-id 解析出的 data URL */
@@ -88,6 +91,12 @@ export interface InvocationInput {
   text: string;
   /** 上游会话标识；续接同一会话时带上 */
   conversationRef?: string | undefined;
+  /**
+   * 账号的对象 ID（`participant.id`）。M0 实测确认真实上游的每条 invocation
+   * 都带这个字段（回显消息的 `from.id` 与之一致）；调用方（调度器）本来就持有
+   * oid 用于构造连接 URL，这里顺路透传给编解码层，不需要新开一条获取渠道。
+   */
+  participantId?: string | undefined;
   /** 透传的 model / reasoning.effort 等，原样带给上游，不改写 */
   passthrough?: Record<string, unknown>;
   /** 本轮可用的工具声明（M5） */

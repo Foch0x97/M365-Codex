@@ -40,6 +40,8 @@ export interface RunInput {
   invocationId: string;
   text: string;
   conversationRef?: string | undefined;
+  /** 账号的对象 ID，原样转交给 codec 填 `participant.id`（M0 实测确认真实上游需要这个字段） */
+  oid?: string | undefined;
   passthrough?: Record<string, unknown> | undefined;
   tools?: readonly ToolDeclaration[] | undefined;
   toolResults?: readonly ToolResultInput[] | undefined;
@@ -117,6 +119,7 @@ export class SydneyConnection {
               invocationId: input.invocationId,
               text: input.text,
               conversationRef: input.conversationRef,
+              participantId: input.oid,
               passthrough: input.passthrough,
               tools: input.tools,
               toolResults: input.toolResults,

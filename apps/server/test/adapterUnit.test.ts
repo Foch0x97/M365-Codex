@@ -167,25 +167,37 @@ describe('SydneyCodecV1', () => {
     expect(codec.isHandshakeAck('{"error":"boom"}')).toBe(false);
   });
 
-  it('invocation 携带用户文本与透传参数', () => {
+  it('invocation 携带用户文本、单数 message 对象与透传参数', () => {
     const raw = codec.encodeInvocation({
       invocationId: 'inv1',
       text: '你好',
+      participantId: 'oid-1',
       passthrough: { model: 'gpt-5-codex', reasoning: { effort: 'high' } },
     });
     const parsed = JSON.parse(raw.replace(RECORD_SEPARATOR, ''));
     expect(parsed.invocationId).toBe('inv1');
     const arg = parsed.arguments[0];
-    expect(arg.messages[0].text).toBe('你好');
+    // 真实字段：单数 message 对象，不是 messages 数组（M0 实测确认）
+    expect(arg.message).toEqual({ author: 'user', inputMethod: 'Keyboard', text: '你好', messageType: 'Chat' });
+    expect(arg.participant).toEqual({ id: 'oid-1' });
+    expect(arg.isStartOfSession).toBe(true);
+    expect(arg.conversationId).toBeUndefined();
     // 透传参数原样带上，不改写
     expect(arg.model).toBe('gpt-5-codex');
     expect(arg.reasoning).toEqual({ effort: 'high' });
   });
 
-  it('把 stream item 映射为 text_delta', () => {
+  it('续接会话时带 conversationId 且 isStartOfSession 为 false', () => {
+    const raw = codec.encodeInvocation({ invocationId: 'inv2', text: '继续', conversationRef: 'conv-1' });
+    const arg = JSON.parse(raw.replace(RECORD_SEPARATOR, '')).arguments[0];
+    expect(arg.conversationId).toBe('conv-1');
+    expect(arg.isStartOfSession).toBe(false);
+  });
+
+  it('把 stream item 映射为 text_delta（真实响应负载在 item 里）', () => {
     const events = codec.mapMessageToEvents({
       type: 2,
-      arguments: [{ messages: [{ author: 'bot', text: 'hello' }] }],
+      item: { messages: [{ author: 'bot', text: 'hello' }] },
     });
     expect(events).toEqual([{ kind: 'text_delta', text: 'hello' }]);
   });
@@ -193,7 +205,7 @@ describe('SydneyCodecV1', () => {
   it('跳过回显的用户消息', () => {
     const events = codec.mapMessageToEvents({
       type: 2,
-      arguments: [{ messages: [{ author: 'user', text: 'echo' }] }],
+      item: { messages: [{ author: 'user', text: 'echo' }] },
     });
     expect(events).toEqual([]);
   });
@@ -201,19 +213,25 @@ describe('SydneyCodecV1', () => {
   it('映射引用来源', () => {
     const events = codec.mapMessageToEvents({
       type: 2,
-      arguments: [
-        {
-          messages: [
-            {
-              author: 'bot',
-              text: 'x',
-              sourceAttributions: [{ seeMoreUrl: 'https://a.example', providerDisplayName: 'A' }],
-            },
-          ],
-        },
-      ],
+      item: {
+        messages: [
+          {
+            author: 'bot',
+            text: 'x',
+            sourceAttributions: [{ seeMoreUrl: 'https://a.example', providerDisplayName: 'A' }],
+          },
+        ],
+      },
     });
     expect(events).toContainEqual({ kind: 'citation', url: 'https://a.example', title: 'A' });
+  });
+
+  it('spokenText 不再当成 reasoning_delta（实测内容与 text 一致，只是语音合成版本）', () => {
+    const events = codec.mapMessageToEvents({
+      type: 2,
+      item: { messages: [{ author: 'bot', text: 'hello', spokenText: 'hello' }] },
+    });
+    expect(events).toEqual([{ kind: 'text_delta', text: 'hello' }]);
   });
 
   it('completion 无错误 → completed', () => {
@@ -226,12 +244,32 @@ describe('SydneyCodecV1', () => {
     expect(events).toEqual([{ kind: 'upstream_error', message: '出错了', retryable: false }]);
   });
 
-  it('Throttled 结果 → 可重试的 upstream_error', () => {
+  it('Throttled 结果 → 可重试的 upstream_error（且不下发 bot 的道歉文案）', () => {
     const events = codec.mapMessageToEvents({
       type: 2,
-      arguments: [{ result: { value: 'Throttled', message: '限流' } }],
+      item: {
+        result: { value: 'Throttled', message: '限流' },
+        messages: [{ author: 'bot', text: '道歉文案', turnState: 'Failed' }],
+      },
     });
     expect(events).toEqual([{ kind: 'upstream_error', message: '限流', retryable: true }]);
+  });
+
+  it('真实观察到的 InvalidCopilotLicense 错误 → 不可重试的 upstream_error', () => {
+    const events = codec.mapMessageToEvents({
+      type: 2,
+      item: {
+        result: {
+          value: 'ForbiddenRequest',
+          message: '你似乎没有有效的许可证。',
+          errorCode: 'InvalidCopilotLicense',
+        },
+        messages: [{ author: 'bot', text: '你似乎没有有效的许可证。', turnState: 'Failed' }],
+      },
+    });
+    expect(events).toEqual([
+      { kind: 'upstream_error', message: '你似乎没有有效的许可证。', retryable: false },
+    ]);
   });
 
   it('ping/close 不产生业务事件', () => {
