@@ -47,7 +47,7 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_REPOSITORY }}
-          # 关掉默认的 latest=auto：latest 只在正式 Release 时移动
+          # 关掉默认的 latest=auto，改由下面显式控制
           flavor: |
             latest=false
           tags: |
@@ -55,7 +55,8 @@ jobs:
             type=sha,prefix=sha-
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            # latest 跟随任意 v* 版本 tag 或正式 Release
+            type=raw,value=latest,enable=${{ github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') }}
 
       - name: 构建并推送
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6

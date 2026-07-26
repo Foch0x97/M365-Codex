@@ -53,13 +53,13 @@ Codex Cloud 云端任务、云端代码审查与云端 GitHub 集成、OpenAI �
 
 ### 取决于上游探测结果的能力
 
-图片理解、PDF/Office 附件、长上下文上限、严格结构化 JSON、并行工具调用、思考等级是否真正分级、精确 token 用量、引用来源、取消及时性——这些能力是否可用取决于 M0 阶段对真实上游的探测结果，达不到门槛的不会默认启用。
+图片理解、PDF/Office 附件、长上下文上限、严格结构化 JSON、并行工具调用、思考等级是否真正分级、精确 token 用量、引用来源、取消及时性——这些能力是否可用取决于对真实上游的探测结果，达不到门槛的不会默认启用。
 
 ---
 
 ## 快速开始
 
-> 前置条件：一个可用的 Microsoft 365 Copilot 账号（授权步骤在管理界面完成，M2 里程碑提供）。
+> 前置条件：一个可用的 Microsoft 365 Copilot 账号（授权步骤在管理界面完成）。
 
 ### 1. 准备环境变量
 
@@ -79,20 +79,18 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 
 ### 2. 用 Docker 运行
 
-镜像发布在 **Docker Hub**：`<你的 DockerHub 用户名>/m365-codex`（由 GitHub Actions
-用仓库里配置的 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` / `DOCKERHUB_REPOSITORY` 推送）。
+镜像发布在 **Docker Hub**：[`foch0x97/m365-codex`](https://hub.docker.com/r/foch0x97/m365-codex)，
+多架构（`linux/amd64` + `linux/arm64`）。
 
 ```bash
-docker pull <你的 DockerHub 用户名>/m365-codex:0.4.0
+docker pull foch0x97/m365-codex:latest
 ```
 
-标签规则：`main` 与 `sha-<短哈希>` 跟随主分支；`0.4.0` / `0.4` 由版本 tag 产生；
-`latest` **只在正式 Release 时移动**。支持 `linux/amd64` 与 `linux/arm64`。
+标签规则：`latest` 跟随最新正式 Release；`0.4.1` / `0.4` 由版本 tag 产生；
+`main` 与 `sha-<短哈希>` 跟随主分支最新提交。
 
 ```bash
-# 用 compose（把镜像名传给 M365_CODEX_IMAGE）
-M365_CODEX_IMAGE=<你的 DockerHub 用户名>/m365-codex:0.4.0 \
-  docker compose -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml up -d
 ```
 
 验证：
@@ -185,28 +183,9 @@ wire_api = "responses"           # 只支持 responses，chat 已于 2026-02 移
 
 ---
 
-## 项目进度
-
-按里程碑 M0–M9 推进，每个里程碑先写测试/契约，通过 DoD 后才进入下一步。各版本的具体内容见 [CHANGELOG.md](CHANGELOG.md)。
-
-| 里程碑 | 内容 | 状态 |
-|---|---|---|
-| M0 | 上游能力探针（需真实账号，人工执行） | 未开始 |
-| M1 | 工程骨架与安全底座 | ✅ 已完成 |
-| M2 | OAuth（PKCE）与账号健康 | ✅ 已完成 |
-| M3 | Sydney 适配器与账号池调度 | ✅ 已完成（框架，待 M0 校准协议） |
-| M4 | Responses 非流式 + 流式 | ✅ 已完成 |
-| M5 | 工具调用与完整代理循环 | 未开始 |
-| M6 | 文件/图片/Office-PDF + Chat Completions | 未开始 |
-| M7 | 幂等/恢复/清理 + 管理 WebUI | 未开始 |
-| M8 | 迁移/备份/可观测 + Codex 实机验收 | 未开始 |
-| M9 | 交付与发布（多架构镜像、安全门禁） | 未开始 |
-
----
-
 ## 技术栈
 
-TypeScript + Node.js ≥22 + Fastify；SQLite（WAL，使用 Node 内置 `node:sqlite`，无原生编译依赖）；Zod 校验；Pino 日志；AES-256-GCM 加密；Vitest 测试；管理 WebUI 用 React + Vite（M7）。单进程单容器，端口 `8080`，数据目录 `/data`。
+TypeScript + Node.js ≥22 + Fastify；SQLite（WAL，使用 Node 内置 `node:sqlite`，无原生编译依赖）；Zod 校验；Pino 日志；AES-256-GCM 加密；Vitest 测试。单进程单容器，端口 `8080`，数据目录 `/data`。
 
 ## 开发命令
 

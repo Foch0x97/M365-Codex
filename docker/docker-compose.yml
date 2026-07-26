@@ -8,10 +8,10 @@
 
 services:
   m365-codex:
-    # 镜像发布在 Docker Hub：<你的DockerHub用户名>/m365-codex
-    # 用 M365_CODEX_IMAGE 覆盖，例如 M365_CODEX_IMAGE=youruser/m365-codex:0.4.0
-    image: ${M365_CODEX_IMAGE:-m365-codex:local}
-    # 若要本地构建镜像，取消下面注释（并把上面的 image 当作构建产物名）：
+    # 镜像发布在 Docker Hub。可用 M365_CODEX_IMAGE 覆盖具体版本，例如
+    # M365_CODEX_IMAGE=foch0x97/m365-codex:0.4.1
+    image: ${M365_CODEX_IMAGE:-foch0x97/m365-codex:latest}
+    # 若要本地构建镜像，取消下面注释：
     # build:
     #   context: ..
     #   dockerfile: Dockerfile
