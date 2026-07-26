@@ -94,11 +94,15 @@ describe('与系统 tar 的互操作', () => {
       }
       if (!hasTar) return;
 
-      const listing = execFileSync('tar', ['-tzf', archivePath], { encoding: 'utf8' });
+      // 用 cwd + 相对文件名调用 tar，不要把 `C:\…` 这种 Windows 绝对路径传给它：
+      // MSYS/Git-Bash 附带的 GNU tar 会把 `C:` 当成 `host:path` 的远程语法，
+      // 报 "Cannot connect to C: resolve failed"——同一份包在别的 tar 上却能解开，
+      // 于是这条测试在不同机器上时绿时红。
+      const listing = execFileSync('tar', ['-tzf', 'backup.tar.gz'], { encoding: 'utf8', cwd: dir });
       expect(listing).toContain('manifest.json');
       expect(listing).toContain('files/a/1');
 
-      execFileSync('tar', ['-xzf', archivePath, '-C', dir]);
+      execFileSync('tar', ['-xzf', 'backup.tar.gz'], { cwd: dir });
       const extracted = readFileSync(join(dir, 'files', 'a', '1'), 'utf8');
       expect(extracted).toBe('hello');
     } finally {
