@@ -46,23 +46,49 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
 }
 
-/** 解析请求里的一个工具定义。非 function 类型或缺 name 时抛清晰错误。 */
-export function parseTool(raw: unknown, index: number): ParsedTool {
+/** 被跳过的工具：客户端声明了，但本网关执行不了（OpenAI 托管工具等）。 */
+export interface SkippedTool {
+  name: string;
+  type: string;
+  reason: string;
+}
+
+/**
+ * 解析一个工具定义，返回**一个或多个** ParsedTool。
+ *
+ * 真实 Codex（v0.145）一次会发三种形态，这里都要认（2026-07-26 实测抓包）：
+ *   { type:'function', name, description, strict, parameters }   —— 扁平 function
+ *   { type:'function', function:{…} }                            —— 嵌套 function
+ *   { type:'namespace', name, description, tools:[function…] }   —— 一组子工具（如 multi_agent_v1）
+ * namespace 按其子工具**摊平**登记：模型仍按子工具原名调用，本网关只是把分组拆开。
+ *
+ * 其余类型（web_search / file_search / code_interpreter / image_generation…）是
+ * OpenAI 托管工具，本项目执行不了（见 §24.3）。这类**跳过而不是报错**：
+ * 直接 422 会让默认配置的 Codex 完全用不了，而跳过既不假装支持（工具不会出现在
+ * 给上游的目录里，模型真去调也会被「未声明工具」挡下），又能通过 skipped 明确告知调用方。
+ */
+export function parseTool(raw: unknown, index: number, skipped?: SkippedTool[]): ParsedTool[] {
   const obj = asObject(raw);
   if (obj === null) {
     throw ApiError.badRequest(`tools[${index}] 不是对象`, `tools.${index}`);
   }
 
   const type = obj.type;
+
+  if (type === 'namespace') {
+    const nested = Array.isArray(obj.tools) ? obj.tools : [];
+    return nested.flatMap((child, childIndex) => parseTool(child, childIndex, skipped));
+  }
+
   if (type !== undefined && type !== 'function') {
-    // 只支持本地 function 工具；OpenAI 托管内置工具不在本项目能力范围（见 §7）
     const typeLabel = typeof type === 'string' ? type : typeof type;
-    throw new ApiError({
-      type: 'unsupported_feature',
-      status: 422,
-      message: `不支持的工具类型 ${typeLabel}；仅支持本地 function 工具`,
-      param: `tools.${index}.type`,
+    const name = typeof obj.name === 'string' ? obj.name : typeLabel;
+    skipped?.push({
+      name,
+      type: typeLabel,
+      reason: '托管工具需要 OpenAI 后端执行，本网关不具备该能力',
     });
+    return [];
   }
 
   const fn = asObject(obj.function) ?? obj;
@@ -76,23 +102,26 @@ export function parseTool(raw: unknown, index: number): ParsedTool {
   const sideEffectHint = fn.x_side_effect ?? obj.x_side_effect;
   const sideEffect = sideEffectHint === false ? false : true;
 
-  return { name, description, parameters, sideEffect };
+  return [{ name, description, parameters, sideEffect }];
 }
 
 /** 工具注册表：按名字索引，供参数校验与副作用判定。 */
 export class ToolRegistry {
   readonly #tools = new Map<string, ParsedTool>();
+  readonly #skipped: SkippedTool[];
   readonly #ajv = new Ajv2020({ strict: false, allErrors: true, coerceTypes: false });
 
-  constructor(tools: ParsedTool[]) {
+  constructor(tools: ParsedTool[], skipped: SkippedTool[] = []) {
     for (const tool of tools) {
       this.#tools.set(tool.name, tool);
     }
+    this.#skipped = skipped;
   }
 
   static fromRequest(rawTools: unknown[] | undefined): ToolRegistry {
     if (rawTools === undefined) return new ToolRegistry([]);
-    const parsed = rawTools.map((raw, index) => parseTool(raw, index));
+    const skipped: SkippedTool[] = [];
+    const parsed = rawTools.flatMap((raw, index) => parseTool(raw, index, skipped));
     // 名字重复直接报错，避免歧义
     const seen = new Set<string>();
     for (const tool of parsed) {
@@ -101,7 +130,12 @@ export class ToolRegistry {
       }
       seen.add(tool.name);
     }
-    return new ToolRegistry(parsed);
+    return new ToolRegistry(parsed, skipped);
+  }
+
+  /** 客户端声明了但本网关执行不了、已被跳过的工具。调用方应据此告知用户。 */
+  get skipped(): readonly SkippedTool[] {
+    return this.#skipped;
   }
 
   get size(): number {

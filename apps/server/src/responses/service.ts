@@ -47,6 +47,8 @@ export interface ResponseExecution {
   stream: AsyncGenerator<SseEvent>;
   getFinal: () => ResponseObject;
   getError: () => ApiError | null;
+  /** 客户端声明了但本网关执行不了、已被跳过的工具名（供路由回写响应头告知调用方） */
+  skippedTools: readonly string[];
 }
 
 export interface ResponsesServiceDeps {
@@ -133,6 +135,14 @@ export class ResponsesService {
       now,
     );
 
+    if (registry.skipped.length > 0) {
+      // 不静默：跳过的托管工具要留痕，路由还会通过响应头告诉调用方
+      this.#deps.logger.warn(
+        { response_id: responseId, skipped: registry.skipped.map((t) => `${t.type}:${t.name}`) },
+        '声明了本网关执行不了的工具，已跳过',
+      );
+    }
+
     const errorHolder: { error: ApiError | null } = { error: null };
     const stream = this.#run({ input, extracted, sticky, passthrough, registry, builder, errorHolder, inherited });
     return {
@@ -140,6 +150,7 @@ export class ResponsesService {
       stream,
       getFinal: () => builder.snapshot(),
       getError: () => errorHolder.error,
+      skippedTools: registry.skipped.map((t) => t.name),
     };
   }
 

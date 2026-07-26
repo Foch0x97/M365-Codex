@@ -16,33 +16,48 @@ const weatherTool = {
 
 describe('parseTool', () => {
   it('解析扁平 function 定义', () => {
-    const tool = parseTool(weatherTool, 0);
-    expect(tool.name).toBe('get_weather');
-    expect(tool.description).toBe('查询天气');
-    expect(tool.sideEffect).toBe(true);
+    const [tool] = parseTool(weatherTool, 0);
+    expect(tool?.name).toBe('get_weather');
+    expect(tool?.description).toBe('查询天气');
+    expect(tool?.sideEffect).toBe(true);
   });
 
   it('解析嵌套 function 定义', () => {
-    const tool = parseTool({ type: 'function', function: { name: 'foo', parameters: {} } }, 0);
-    expect(tool.name).toBe('foo');
+    const [tool] = parseTool({ type: 'function', function: { name: 'foo', parameters: {} } }, 0);
+    expect(tool?.name).toBe('foo');
   });
 
   it('x_side_effect: false 标为只读', () => {
-    const tool = parseTool({ ...weatherTool, x_side_effect: false }, 0);
-    expect(tool.sideEffect).toBe(false);
+    const [tool] = parseTool({ ...weatherTool, x_side_effect: false }, 0);
+    expect(tool?.sideEffect).toBe(false);
   });
 
   it('缺少 name 报错', () => {
     expect(() => parseTool({ type: 'function' }, 0)).toThrow(ApiError);
   });
 
-  it('非 function 类型（托管内置工具）返回 unsupported_feature', () => {
-    try {
-      parseTool({ type: 'web_search' }, 0);
-      throw new Error('本应抛出');
-    } catch (error) {
-      expect((error as ApiError).type).toBe('unsupported_feature');
-    }
+  it('namespace 分组按子工具摊平（真实 Codex 会发 multi_agent_v1 这种）', () => {
+    const tools = parseTool(
+      {
+        type: 'namespace',
+        name: 'multi_agent_v1',
+        description: '多智能体',
+        tools: [
+          { type: 'function', name: 'spawn_agent', parameters: { type: 'object' } },
+          { type: 'function', name: 'close_agent', parameters: { type: 'object' } },
+        ],
+      },
+      0,
+    );
+    expect(tools.map((t) => t.name)).toEqual(['spawn_agent', 'close_agent']);
+  });
+
+  it('托管工具（web_search）被跳过并记录，而不是让整轮请求失败', () => {
+    const skipped: { name: string; type: string; reason: string }[] = [];
+    const tools = parseTool({ type: 'web_search', external_web_access: false }, 0, skipped);
+    expect(tools).toHaveLength(0);
+    expect(skipped[0]?.type).toBe('web_search');
+    expect(skipped[0]?.reason).toContain('OpenAI');
   });
 });
 
@@ -54,6 +69,23 @@ describe('ToolRegistry.fromRequest', () => {
 
   it('工具名重复报错', () => {
     expect(() => ToolRegistry.fromRequest([weatherTool, weatherTool])).toThrow(/重复/);
+  });
+
+  it('真实 Codex 的混合工具列表：function + namespace 收下，托管工具跳过', () => {
+    const registry = ToolRegistry.fromRequest([
+      { type: 'function', name: 'shell_command', strict: false, parameters: { type: 'object' } },
+      {
+        type: 'namespace',
+        name: 'multi_agent_v1',
+        tools: [{ type: 'function', name: 'spawn_agent', parameters: { type: 'object' } }],
+      },
+      { type: 'web_search', external_web_access: false },
+    ]);
+    expect(registry.size).toBe(2);
+    expect(registry.has('shell_command')).toBe(true);
+    expect(registry.has('spawn_agent')).toBe(true);
+    expect(registry.has('web_search')).toBe(false);
+    expect(registry.skipped.map((t) => t.name)).toEqual(['web_search']);
   });
 
   it('toDeclarations 转成上游声明', () => {

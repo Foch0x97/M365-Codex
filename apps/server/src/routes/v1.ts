@@ -32,6 +32,12 @@ export function registerV1Routes(app: FastifyInstance, context: AppContext): voi
     });
     context.inFlight.register(execution.responseId, controller);
 
+    // 声明了但执行不了的工具（如 OpenAI 托管的 web_search）不静默丢弃：
+    // 在这里回一个响应头，调用方能立刻看见自己有哪些工具不会生效
+    if (execution.skippedTools.length > 0) {
+      void reply.header('x-m365-codex-skipped-tools', execution.skippedTools.join(','));
+    }
+
     const onClose = (): void => controller.abort();
     reply.raw.on('close', onClose);
 
