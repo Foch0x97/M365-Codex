@@ -3,7 +3,7 @@
   "info": {
     "title": "M365-Codex 对外 API",
     "version": "0.4.0",
-    "description": "与 OpenAI Responses 兼容的本地网关接口（M4 文本子集）。非官方项目。"
+    "description": "与 OpenAI Responses / Chat Completions / Files / Uploads 兼容的本地网关接口。非官方项目。"
   },
   "servers": [{ "url": "/" }],
   "security": [{ "ApiKeyAuth": [] }, { "BearerAuth": [] }],
@@ -78,6 +78,211 @@
         "responses": {
           "200": { "description": "取消中" },
           "400": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "summary": "Chat Completions 兼容入口（复用 Responses 内核，不建第二套推理逻辑）",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ChatCompletionRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "非流式返回 chat.completion；stream=true 时为 text/event-stream 的 chat.completion.chunk",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ChatCompletionResponse" } },
+              "text/event-stream": { "schema": { "type": "string" } }
+            }
+          },
+          "422": { "$ref": "#/components/responses/Error" },
+          "502": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/files": {
+      "post": {
+        "summary": "上传文件",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {
+                  "file": { "type": "string", "format": "binary" },
+                  "purpose": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已创建的 File 对象",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileObject" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "get": {
+        "summary": "列出当前 API Key 名下的文件",
+        "parameters": [
+          { "name": "purpose", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "文件列表",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileList" } } }
+          }
+        }
+      }
+    },
+    "/v1/files/{id}": {
+      "get": {
+        "summary": "取回单个文件的元数据",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "File 对象",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileObject" } } }
+          },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "summary": "删除文件",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "已删除" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/files/{id}/content": {
+      "get": {
+        "summary": "下载文件原始内容",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "原始文件字节",
+            "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/uploads": {
+      "post": {
+        "summary": "创建一次分片上传",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["filename", "bytes"],
+                "properties": {
+                  "filename": { "type": "string" },
+                  "purpose": { "type": "string" },
+                  "bytes": { "type": "integer" },
+                  "mime_type": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已创建的 Upload 对象",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadObject" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/uploads/{id}/parts": {
+      "post": {
+        "summary": "上传一个分片",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["data"],
+                "properties": { "data": { "type": "string", "format": "binary" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已创建的 Upload.Part 对象",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadPartObject" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/uploads/{id}/complete": {
+      "post": {
+        "summary": "完成分片上传，拼装为 File",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["part_ids"],
+                "properties": { "part_ids": { "type": "array", "items": { "type": "string" } } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已完成的 Upload 对象（含 file 字段）",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadObject" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/uploads/{id}/cancel": {
+      "post": {
+        "summary": "取消一次未完成的分片上传",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "已取消的 Upload 对象",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadObject" } } }
+          },
           "404": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -242,6 +447,111 @@
           "temperature": { "type": ["number", "null"] },
           "error": { "type": ["object", "null"] },
           "incomplete_details": { "type": ["object", "null"] }
+        }
+      },
+      "FileObject": {
+        "type": "object",
+        "required": ["id", "object", "bytes", "created_at", "filename", "purpose", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "object": { "const": "file" },
+          "bytes": { "type": "integer" },
+          "created_at": { "type": "integer" },
+          "filename": { "type": "string" },
+          "purpose": { "type": "string" },
+          "status": { "type": "string", "enum": ["processed", "error"] },
+          "status_details": { "type": ["string", "null"] },
+          "expires_at": { "type": ["integer", "null"] }
+        }
+      },
+      "FileList": {
+        "type": "object",
+        "required": ["object", "data"],
+        "properties": {
+          "object": { "const": "list" },
+          "data": { "type": "array", "items": { "$ref": "#/components/schemas/FileObject" } }
+        }
+      },
+      "UploadObject": {
+        "type": "object",
+        "required": ["id", "object", "bytes", "created_at", "filename", "purpose", "status", "expires_at"],
+        "properties": {
+          "id": { "type": "string" },
+          "object": { "const": "upload" },
+          "bytes": { "type": "integer" },
+          "created_at": { "type": "integer" },
+          "filename": { "type": "string" },
+          "purpose": { "type": "string" },
+          "status": { "type": "string", "enum": ["pending", "completed", "cancelled", "expired"] },
+          "expires_at": { "type": "integer" },
+          "file": { "oneOf": [{ "$ref": "#/components/schemas/FileObject" }, { "type": "null" }] }
+        }
+      },
+      "UploadPartObject": {
+        "type": "object",
+        "required": ["id", "object", "created_at", "upload_id"],
+        "properties": {
+          "id": { "type": "string" },
+          "object": { "const": "upload.part" },
+          "created_at": { "type": "integer" },
+          "upload_id": { "type": "string" }
+        }
+      },
+      "ChatMessage": {
+        "type": "object",
+        "required": ["role"],
+        "properties": {
+          "role": { "type": "string", "enum": ["system", "developer", "user", "assistant", "tool"] },
+          "content": {},
+          "tool_calls": { "type": "array" },
+          "tool_call_id": { "type": "string" },
+          "name": { "type": "string" }
+        }
+      },
+      "ChatCompletionRequest": {
+        "type": "object",
+        "required": ["model", "messages"],
+        "properties": {
+          "model": { "type": "string" },
+          "messages": { "type": "array", "items": { "$ref": "#/components/schemas/ChatMessage" } },
+          "stream": { "type": "boolean" },
+          "temperature": { "type": "number" },
+          "max_tokens": { "type": "integer" },
+          "tools": { "type": "array" },
+          "tool_choice": {},
+          "parallel_tool_calls": { "type": "boolean" },
+          "reasoning_effort": { "type": "string" }
+        }
+      },
+      "ChatCompletionResponse": {
+        "type": "object",
+        "required": ["id", "object", "created", "model", "choices"],
+        "properties": {
+          "id": { "type": "string" },
+          "object": { "const": "chat.completion" },
+          "created": { "type": "integer" },
+          "model": { "type": "string" },
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["index", "message", "finish_reason"],
+              "properties": {
+                "index": { "type": "integer" },
+                "message": {
+                  "type": "object",
+                  "required": ["role"],
+                  "properties": {
+                    "role": { "const": "assistant" },
+                    "content": { "type": ["string", "null"] },
+                    "tool_calls": { "type": "array" }
+                  }
+                },
+                "finish_reason": { "type": ["string", "null"] }
+              }
+            }
+          },
+          "usage": { "type": ["object", "null"] }
         }
       }
     }

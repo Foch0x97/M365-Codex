@@ -1,6 +1,7 @@
 import {
   MESSAGE_TYPE,
   RECORD_SEPARATOR,
+  type ImageInputDescriptor,
   type InvocationInput,
   type ProtocolCodec,
   type RawMessage,
@@ -21,6 +22,12 @@ interface SydneyArgument {
   messages?: SydneyMessage[];
   requestId?: string;
   result?: { value?: string; message?: string };
+  /**
+   * 图片输入（M6，待 M0 校准，见 protocol.ts 里 `ImageInputDescriptor` 的注释）。
+   * 实际到达这里是靠 `...(input.passthrough ?? {})` 展开 `passthrough.images`，
+   * 这个字段只是把线上形态显式建模出来，方便阅读与将来替换。
+   */
+  images?: ImageInputDescriptor[];
   [key: string]: unknown;
 }
 

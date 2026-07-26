@@ -66,6 +66,22 @@ export interface ToolResultInput {
   output: string;
 }
 
+/**
+ * 图片输入的建模字段（M6，`UPSTREAM_IMAGE_INPUT=true` 时生效）。
+ *
+ * ⚠️ 待 M0 校准：上游是否接受图片、字段叫什么、放在 invocation 的哪个位置，
+ * 目前完全未知。这里先定义一个我们自己的约定形态，通过 `InvocationInput.passthrough`
+ * 这条既有的透传通道送到 `encodeInvocation`（`model`/`reasoning`/`temperature` 等
+ * 已经在走这条通道）——因为 `scheduler/dispatcher.ts` 已冻结、不接受新增顶层字段，
+ * 复用 passthrough 是当前唯一能不改调度层就把新字段送到线协议层的办法。
+ * M0 探针拿到真实协议后，再决定是保留这个约定还是替换成上游实际要求的形态。
+ */
+export interface ImageInputDescriptor {
+  /** 图片 URL，或按 file-id 解析出的 data URL */
+  url: string;
+  detail?: string | null;
+}
+
 export interface InvocationInput {
   invocationId: string;
   /** 用户本轮输入的纯文本（M3 只支持文本；图片/文件是 M6） */

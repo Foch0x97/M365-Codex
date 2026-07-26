@@ -132,6 +132,51 @@ export interface ToolsConfig {
 
 export const MAX_ARG_REPAIRS_CEILING = 2;
 
+/**
+ * 文件子系统的限额（对应实施计划 §11、§M6）。
+ *
+ * 全部走配置，且都是**天花板**：单文件、单请求、单 Key 累计存储三层限制，
+ * 任何一层超限都返回明确错误，不做静默截断。
+ */
+export interface FilesConfig {
+  /** 单个文件（或 Upload 单个 part）最大字节数 */
+  readonly maxFileBytes: number;
+  /** 单次 multipart 请求最大字节数（须 ≥ maxFileBytes，供路由设置 Fastify 的 bodyLimit） */
+  readonly maxRequestBytes: number;
+  /** 单个 API Key 累计存储上限（未删除文件的字节数之和） */
+  readonly maxTotalBytesPerKey: number;
+  /** 文件保留期（毫秒），超过 created_at + 该值即视为过期；0 表示不自动过期 */
+  readonly retentionMs: number;
+  /** 未完成 Upload 的存活时间（毫秒），超过后视为过期并清理已收到的分片 */
+  readonly uploadTtlMs: number;
+}
+
+/**
+ * API Key 限额的**全局天花板**（对应实施计划 §10 末句:「API Key 限制不得超过
+ * 系统全局限制」)。单个 Key 的 rpm_limit / daily_limit / max_concurrency 只能
+ * 比这里更严，绝不允许突破——具体裁剪逻辑在 `gateway/rateLimit.ts`。
+ */
+export interface RateLimitConfig {
+  readonly globalRpmLimit: number;
+  readonly globalDailyLimit: number;
+  readonly globalMaxConcurrency: number;
+}
+
+/**
+ * 定时清理的间隔与保留期（对应实施计划 §18）。
+ * 文件/Upload 自己的保留期复用 `FilesConfig`，这里只放专属于 M7 清理任务的项。
+ */
+export interface CleanupConfig {
+  /** 各清理任务共用的运行间隔 */
+  readonly intervalMs: number;
+  /** 已结束（completed/failed/cancelled/incomplete）的 Response 保留多久 */
+  readonly responseRetentionMs: number;
+  /** 审计日志保留多久 */
+  readonly auditLogRetentionMs: number;
+  /** 幂等记录保留多久 */
+  readonly idempotencyRetentionMs: number;
+}
+
 export interface AppConfig {
   readonly port: number;
   readonly dataDir: string;
@@ -150,6 +195,26 @@ export interface AppConfig {
   readonly oauth: OAuthConfig;
   readonly upstream: UpstreamConfig;
   readonly tools: ToolsConfig;
+  readonly files: FilesConfig;
+  readonly rateLimit: RateLimitConfig;
+  readonly cleanup: CleanupConfig;
+  /**
+   * 启动时原始环境变量里显式出现过的键名（非空值）。
+   * `/admin/settings` 据此判断某项是否 `source: "env"`——容器编排是唯一真源，
+   * 一旦环境变量显式设置过，UI 就不能悄悄盖掉（见实施计划 §M7、契约 §2.3）。
+   */
+  readonly envKeysPresent: ReadonlySet<string>;
+  /**
+   * 上游是否真支持图片输入。默认 false——上游能力要等 M0 真实探针校准，
+   * 探针结论出来前一律拒绝并返回 unsupported_feature，不假装支持。
+   */
+  readonly upstreamImageInput: boolean;
+  /**
+   * 重建出的对话上下文超过多少字符就从最旧历史开始截断（见
+   * `responses/schema.ts` 的 `extractInputText`）。Codex 这类 `store:false`
+   * 客户端每轮会带上几万字符的系统指令 + 完整历史，默认给一个宽松值。
+   */
+  readonly contextMaxChars: number;
 }
 
 const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
@@ -270,6 +335,27 @@ const envSchema = z.object({
       message: `必须是 0-${MAX_ARG_REPAIRS_CEILING} 的整数`,
     }),
   TOOLS_ALLOW_PARALLEL: booleanFromEnv,
+  FILES_MAX_FILE_BYTES: positiveIntFromEnv(25 * 1024 * 1024, 1024),
+  FILES_MAX_REQUEST_BYTES: positiveIntFromEnv(26 * 1024 * 1024, 1024),
+  FILES_MAX_TOTAL_BYTES_PER_KEY: positiveIntFromEnv(200 * 1024 * 1024, 1024),
+  // 0 表示不自动过期，因此下限放宽到 0（不能用 positiveIntFromEnv，它的下限是 min）
+  FILES_RETENTION_MS: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined || value.trim() === '' ? 30 * 24 * 60 * 60 * 1000 : Number(value)))
+    .refine((value) => Number.isInteger(value) && value >= 0, { message: '必须是 ≥0 的整数' }),
+  FILES_UPLOAD_TTL_MS: positiveIntFromEnv(24 * 60 * 60 * 1000, 60_000),
+  UPSTREAM_IMAGE_INPUT: booleanFromEnv,
+  CONTEXT_MAX_CHARS: positiveIntFromEnv(400_000, 10_000),
+  // --- API Key 限额的全局天花板（§10）---
+  RATE_LIMIT_GLOBAL_RPM: positiveIntFromEnv(600, 1),
+  RATE_LIMIT_GLOBAL_DAILY: positiveIntFromEnv(50_000, 1),
+  RATE_LIMIT_GLOBAL_MAX_CONCURRENCY: positiveIntFromEnv(50, 1),
+  // --- 定时清理（§18）---
+  CLEANUP_INTERVAL_MS: positiveIntFromEnv(10 * 60 * 1000, 30_000),
+  CLEANUP_RESPONSE_RETENTION_MS: positiveIntFromEnv(7 * 24 * 60 * 60 * 1000, 60_000),
+  CLEANUP_AUDIT_LOG_RETENTION_MS: positiveIntFromEnv(90 * 24 * 60 * 60 * 1000, 60_000),
+  CLEANUP_IDEMPOTENCY_RETENTION_MS: positiveIntFromEnv(24 * 60 * 60 * 1000, 60_000),
 });
 
 /** 生成一个「可选正整数、带默认值与下限」的 env 解析器。 */
@@ -330,6 +416,10 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
     issues.push('M365_CODEX_MASTER_KEY: 不能为空');
   }
 
+  if (parsed.success && parsed.data.FILES_MAX_REQUEST_BYTES < parsed.data.FILES_MAX_FILE_BYTES) {
+    issues.push('FILES_MAX_REQUEST_BYTES: 不能小于 FILES_MAX_FILE_BYTES');
+  }
+
   if (issues.length > 0 || !parsed.success || masterKey === undefined) {
     throw new ConfigError(issues.length > 0 ? issues : ['未知的配置错误']);
   }
@@ -376,7 +466,37 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
       maxArgRepairs: data.TOOLS_MAX_ARG_REPAIRS,
       allowParallel: data.TOOLS_ALLOW_PARALLEL ?? true,
     }),
+    files: Object.freeze({
+      maxFileBytes: data.FILES_MAX_FILE_BYTES,
+      maxRequestBytes: data.FILES_MAX_REQUEST_BYTES,
+      maxTotalBytesPerKey: data.FILES_MAX_TOTAL_BYTES_PER_KEY,
+      retentionMs: data.FILES_RETENTION_MS,
+      uploadTtlMs: data.FILES_UPLOAD_TTL_MS,
+    }),
+    rateLimit: Object.freeze({
+      globalRpmLimit: data.RATE_LIMIT_GLOBAL_RPM,
+      globalDailyLimit: data.RATE_LIMIT_GLOBAL_DAILY,
+      globalMaxConcurrency: data.RATE_LIMIT_GLOBAL_MAX_CONCURRENCY,
+    }),
+    cleanup: Object.freeze({
+      intervalMs: data.CLEANUP_INTERVAL_MS,
+      responseRetentionMs: data.CLEANUP_RESPONSE_RETENTION_MS,
+      auditLogRetentionMs: data.CLEANUP_AUDIT_LOG_RETENTION_MS,
+      idempotencyRetentionMs: data.CLEANUP_IDEMPOTENCY_RETENTION_MS,
+    }),
+    envKeysPresent: computeEnvKeysPresent(env),
+    upstreamImageInput: data.UPSTREAM_IMAGE_INPUT ?? false,
+    contextMaxChars: data.CONTEXT_MAX_CHARS,
   });
+}
+
+/** 记录启动时哪些环境变量被显式赋了非空值，供 `/admin/settings` 判断 `source: "env"`。 */
+function computeEnvKeysPresent(env: RawEnv): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value === 'string' && value.trim() !== '') keys.add(key);
+  }
+  return keys;
 }
 
 /** 生成可安全写入日志的配置摘要：不含密钥与密码。 */
@@ -401,5 +521,9 @@ export function summarizeConfig(config: AppConfig): Record<string, unknown> {
     toolsMode: config.tools.mode,
     toolsMaxRounds: config.tools.maxRounds,
     toolsMaxCallsPerRound: config.tools.maxCallsPerRound,
+    filesMaxFileBytes: config.files.maxFileBytes,
+    filesMaxTotalBytesPerKey: config.files.maxTotalBytesPerKey,
+    upstreamImageInput: config.upstreamImageInput,
+    contextMaxChars: config.contextMaxChars,
   };
 }

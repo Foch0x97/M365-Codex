@@ -7,6 +7,8 @@
 | 组件 | 许可证 | 用途 |
 |---|---|---|
 | [Fastify](https://github.com/fastify/fastify) | MIT | HTTP 服务框架 |
+| [@fastify/multipart](https://github.com/fastify/fastify-multipart) | MIT | 文件上传（`/v1/files`、`/v1/uploads`）的 multipart/form-data 解析 |
+| [pdfjs-dist](https://github.com/mozilla/pdf.js) | Apache-2.0 | PDF 文本提取（legacy Node 构建） |
 | [Pino](https://github.com/pinojs/pino) | MIT | 结构化日志 |
 | [Zod](https://github.com/colinhacks/zod) | MIT | 配置与请求体校验 |
 

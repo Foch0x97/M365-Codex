@@ -14,10 +14,12 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@fastify/multipart": "^10.1.0",
     "@m365-codex/shared": "*",
     "ajv": "^8.20.0",
     "fastify": "^5.2.0",
     "https-proxy-agent": "^7.0.6",
+    "pdfjs-dist": "^6.1.200",
     "pino": "^9.6.0",
     "undici": "^7.29.0",
     "ws": "^8.21.1",

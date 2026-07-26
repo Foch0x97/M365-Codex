@@ -1,9 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { ApiError, buildErrorBody, REQUEST_ID_HEADER } from '@m365-codex/shared';
+import multipart from '@fastify/multipart';
 import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import type { AppContext } from './context.js';
 import { registerAccountRoutes } from './routes/accounts.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerChatRoutes } from './routes/chat.js';
+import { registerFileRoutes } from './routes/files.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerUiRoutes } from './routes/ui.js';
 import { registerV1Routes } from './routes/v1.js';
@@ -102,10 +105,20 @@ export function buildApp(context: AppContext, options: BuildAppOptions = {}): Fa
       );
   });
 
+  // Files/Uploads 用 multipart/form-data；attachFieldsToBody 让文件字段以
+  // 缓冲区形式挂在 request.body 上，同时保留其它文本字段，路由里统一处理。
+  // 单文件大小上限走配置，具体路由再各自设置更贴合场景的 bodyLimit。
+  void app.register(multipart, {
+    attachFieldsToBody: true,
+    limits: { fileSize: context.config.files.maxFileBytes + 1, files: 1 },
+  });
+
   registerHealthRoutes(app, context);
   registerAdminRoutes(app, context);
   registerAccountRoutes(app, context);
   registerV1Routes(app, context);
+  registerFileRoutes(app, context);
+  registerChatRoutes(app, context);
   // 放在最后注册：/ui/* 是通配路由，前面那些显式路由要先匹配
   registerUiRoutes(app);
 

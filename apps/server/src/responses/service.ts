@@ -7,6 +7,7 @@ import type { UpstreamEvent } from '../adapter/protocol.js';
 import type { DispatchRequest, UpstreamDispatcher } from '../scheduler/dispatcher.js';
 import type { ResponseRepository } from '../repo/responses.js';
 import type { ToolCallRepository } from '../repo/toolCalls.js';
+import type { FilesService } from '../files/service.js';
 import { buildToolInstruction, PromptToolScanner } from '../tools/promptProtocol.js';
 import { ToolRegistry, type ValidationReason } from '../tools/registry.js';
 import { ResponseStreamBuilder } from './builder.js';
@@ -14,6 +15,7 @@ import {
   buildPassthrough,
   extractInputText,
   extractReasoningEffort,
+  type ExtractInputDeps,
   type ResponsesRequest,
   type ToolResult,
 } from './schema.js';
@@ -57,6 +59,12 @@ export interface ResponsesServiceDeps {
   toolCalls: ToolCallRepository;
   tools: ToolsConfig;
   logger: Logger;
+  /** M6 新增：解析 input_file / input_image 的 file_id 引用（按发起请求的 API Key 限定归属） */
+  files?: FilesService;
+  /** M6 新增：上游是否真支持图片输入（UPSTREAM_IMAGE_INPUT，默认 false） */
+  upstreamImageInput?: boolean;
+  /** M6 新增：重建出的上下文文本超过多少字符就从最旧历史开始截断 */
+  contextMaxChars?: number;
 }
 
 /** 缓冲中的工具调用（按 call_id 累积参数）。 */
@@ -85,7 +93,22 @@ export class ResponsesService {
 
   create(input: CreateResponseInput): ResponseExecution {
     const { request } = input;
-    const extracted = extractInputText(request); // 不支持内容会在此抛清晰错误
+    // input_file / input_image 的 file_id 引用按发起请求的 API Key 限定归属，
+    // 不允许跨 Key 读取他人上传的文件内容（见 files/service.ts 的 resolveOwned*）。
+    const extracted = extractInputText(request, this.#buildExtractDeps(input.apiKeyId)); // 不支持内容会在此抛清晰错误
+    if (extracted.truncatedChars > 0) {
+      // 不静默：上下文因为超过 CONTEXT_MAX_CHARS 被截断，留痕方便排查"模型突然失忆"
+      this.#deps.logger.info(
+        { truncated_chars: extracted.truncatedChars },
+        '重建的对话上下文超过字符上限，已从最旧历史开始截断',
+      );
+    }
+    if (extracted.skippedItemTypes.length > 0) {
+      this.#deps.logger.warn(
+        { skipped_item_types: extracted.skippedItemTypes },
+        'input 中出现无法识别的历史项类型，已跳过（不影响用户可见内容）',
+      );
+    }
     const registry = ToolRegistry.fromRequest(request.tools);
     const previousResponseId = request.previous_response_id ?? null;
 
@@ -107,6 +130,12 @@ export class ResponsesService {
     const sticky = this.#resolveSticky(previousResponseId);
     const reasoningEffort = extractReasoningEffort(request);
     const passthrough = buildPassthrough(request);
+    if (extracted.images.length > 0) {
+      // 「适配层约定」：invocation 的透传字段本就是给上游的通用扩展通道
+      // （model/reasoning/temperature 都走这条路），图片沿用同一通道，
+      // 具体线上字段名/结构待 M0 探针校准（见 adapter/protocol.ts 的注释）。
+      passthrough.images = extracted.images;
+    }
 
     const builder = new ResponseStreamBuilder({
       responseId,
@@ -456,6 +485,25 @@ export class ResponsesService {
     const binding = this.#deps.responses.findBinding(previousResponseId);
     if (binding?.account_id == null) return null;
     return { accountId: binding.account_id, conversationRef: binding.upstream_conversation_ref };
+  }
+
+  /** 把 FilesService 适配成 extractInputText 需要的、按 apiKeyId 限定归属的查找接口。 */
+  #buildExtractDeps(apiKeyId: string | null): ExtractInputDeps {
+    const files = this.#deps.files;
+    if (files === undefined || apiKeyId === null) {
+      return {
+        imageInputEnabled: this.#deps.upstreamImageInput === true,
+        contextMaxChars: this.#deps.contextMaxChars,
+      };
+    }
+    return {
+      imageInputEnabled: this.#deps.upstreamImageInput === true,
+      contextMaxChars: this.#deps.contextMaxChars,
+      files: {
+        resolveText: (fileId) => files.resolveOwnedText(fileId, apiKeyId),
+        resolveImageDataUrl: (fileId) => files.resolveOwnedImageDataUrl(fileId, apiKeyId),
+      },
+    };
   }
 }
 

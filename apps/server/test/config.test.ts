@@ -134,6 +134,44 @@ describe('loadConfig', () => {
   it('拒绝未知的工具模式', () => {
     expect(() => loadConfig({ ...baseEnv, TOOLS_MODE: 'magic' })).toThrow(ConfigError);
   });
+
+  it('文件子系统限额有可用默认值（M6）', () => {
+    const { files, upstreamImageInput } = loadConfig(baseEnv);
+    expect(files.maxFileBytes).toBeGreaterThan(0);
+    expect(files.maxRequestBytes).toBeGreaterThanOrEqual(files.maxFileBytes);
+    expect(files.maxTotalBytesPerKey).toBeGreaterThan(files.maxFileBytes);
+    expect(files.retentionMs).toBeGreaterThan(0);
+    expect(files.uploadTtlMs).toBeGreaterThan(0);
+    // 默认不假装支持图片输入：真实能力要等 M0 探针校准
+    expect(upstreamImageInput).toBe(false);
+  });
+
+  it('文件子系统限额可用环境变量覆盖', () => {
+    const { files, upstreamImageInput } = loadConfig({
+      ...baseEnv,
+      FILES_MAX_FILE_BYTES: '1024',
+      FILES_MAX_REQUEST_BYTES: '2048',
+      FILES_MAX_TOTAL_BYTES_PER_KEY: '4096',
+      FILES_RETENTION_MS: '0',
+      UPSTREAM_IMAGE_INPUT: 'true',
+    });
+    expect(files.maxFileBytes).toBe(1024);
+    expect(files.maxRequestBytes).toBe(2048);
+    expect(files.maxTotalBytesPerKey).toBe(4096);
+    expect(files.retentionMs).toBe(0);
+    expect(upstreamImageInput).toBe(true);
+  });
+
+  it('上下文字符上限有可用默认值，且可被环境变量覆盖', () => {
+    expect(loadConfig(baseEnv).contextMaxChars).toBeGreaterThan(10_000);
+    expect(loadConfig({ ...baseEnv, CONTEXT_MAX_CHARS: '50000' }).contextMaxChars).toBe(50_000);
+  });
+
+  it('单请求上限不得小于单文件上限', () => {
+    expect(() =>
+      loadConfig({ ...baseEnv, FILES_MAX_FILE_BYTES: '2048', FILES_MAX_REQUEST_BYTES: '1024' }),
+    ).toThrow(/FILES_MAX_REQUEST_BYTES/);
+  });
 });
 
 describe('summarizeConfig', () => {

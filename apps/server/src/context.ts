@@ -14,9 +14,12 @@ import { UpstreamDispatcher } from './scheduler/dispatcher.js';
 import { AdminSessionRepository } from './repo/adminSessions.js';
 import { ApiKeyRepository } from './repo/apiKeys.js';
 import { AuditLogRepository } from './repo/auditLogs.js';
+import { FileRepository, UploadRepository } from './repo/files.js';
 import { OAuthSessionRepository } from './repo/oauthSessions.js';
 import { ResponseRepository } from './repo/responses.js';
 import { ToolCallRepository } from './repo/toolCalls.js';
+import { FilesService } from './files/service.js';
+import { FileStorage } from './files/storage.js';
 import { InFlightRegistry } from './responses/inFlight.js';
 import { ResponsesService } from './responses/service.js';
 
@@ -45,6 +48,10 @@ export interface AppContext {
   readonly responseRepo: ResponseRepository;
   readonly toolCalls: ToolCallRepository;
   readonly inFlight: InFlightRegistry;
+  readonly fileRepo: FileRepository;
+  readonly uploadRepo: UploadRepository;
+  readonly fileStorage: FileStorage;
+  readonly files: FilesService;
   readonly startedAt: number;
 }
 
@@ -84,12 +91,20 @@ export function createContext(options: CreateContextOptions): AppContext {
   });
   const responseRepo = new ResponseRepository(db);
   const toolCallRepo = new ToolCallRepository(db);
+  const fileRepo = new FileRepository(db);
+  const uploadRepo = new UploadRepository(db);
+  const fileStorage = new FileStorage(config.dataDir);
+  const filesService = new FilesService({ files: fileRepo, storage: fileStorage, config: config.files });
   const responsesService = new ResponsesService({
     dispatcher,
     responses: responseRepo,
     toolCalls: toolCallRepo,
     tools: config.tools,
     logger,
+    // M6 新增：input_file 按 file-id 取文本、input_image 按配置决定是否放行
+    files: filesService,
+    upstreamImageInput: config.upstreamImageInput,
+    contextMaxChars: config.contextMaxChars,
   });
   const inFlight = new InFlightRegistry();
 
@@ -114,6 +129,10 @@ export function createContext(options: CreateContextOptions): AppContext {
     responseRepo,
     toolCalls: toolCallRepo,
     inFlight,
+    fileRepo,
+    uploadRepo,
+    fileStorage,
+    files: filesService,
     startedAt: options.startedAt ?? Date.now(),
   };
 }

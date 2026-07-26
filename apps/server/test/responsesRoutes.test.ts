@@ -93,8 +93,8 @@ describe('POST /v1/responses 非流式', () => {
     expect(body.id.startsWith('resp_')).toBe(true);
     const message = body.output.find((i) => i.type === 'message');
     expect(message?.content?.[0]?.text).toBe('你好，世界');
-    // 上游收到了用户输入
-    expect(server?.invocationTexts).toEqual(['在吗']);
+    // 上游收到了用户输入（M6：文本按角色重建上下文，见 responses/schema.ts）
+    expect(server?.invocationTexts).toEqual(['【用户】\n在吗']);
   });
 
   it('透传 model 与 reasoning.effort 给上游', async () => {

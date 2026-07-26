@@ -43,6 +43,8 @@ Codex CLI ──HTTP(Responses 协议)──> M365-Codex ──WebSocket(Sydney)
 - `model` 与 `reasoning.effort` **原样透传**（本项目不新造模型别名，也不改写取值）；
 - 完整的工具调用代理循环：模型请求调用工具 → 本机执行 → 结果回传 → 继续推理；
 - Codex 的本机能力照常可用：读写文件、`apply_patch`、执行命令、Git、跑测试、命令行本地代码审查、本地/自建 MCP、`AGENTS.md`；
+- 文件上传与文本提取：纯文本/代码/JSON/CSV/日志、PDF、Office（docx/xlsx/pptx），供 `input_file` 引用；`/v1/files`、`/v1/uploads` 分片上传；
+- `/v1/chat/completions` 兼容入口（复用 Responses 内核，供其他 OpenAI 兼容客户端使用，非 Codex 自身）；
 - 多 API Key 管理（有效期、限额、可撤销）、自定义公开地址、管理界面。
 
 ### 不能做什么（依赖 OpenAI 后端，本项目不会伪装实现）
@@ -146,6 +148,9 @@ wire_api = "responses"           # 只支持 responses，chat 已于 2026-02 移
 | `OAUTH_*` | 否 | OAuth 客户端 ID、端点与 scope，留空使用内置默认值 |
 | `UPSTREAM_*` | 否 | 上游路径模板、协议版本、心跳/超时/重连 |
 | `TOOLS_*` | 否 | 工具调用方式（`native`/`prompt`/`auto`）与代理循环上限：每轮调用数、轮次、累计调用数、结果大小、参数修复次数 |
+| `FILES_*` | 否 | 单文件/单请求大小上限、单 Key 累计存储上限、文件保留期、未完成 Upload 存活时间 |
+| `UPSTREAM_IMAGE_INPUT` | 否 | 上游是否真支持图片输入，默认 `false`（`input_image` 返回明确错误，不假装支持） |
+| `CONTEXT_MAX_CHARS` | 否 | 重建的对话上下文超过多少字符就从最旧历史开始截断，默认给一个宽松值 |
 
 **严禁**通过环境变量注入任何 Microsoft Token 或 OAuth 凭据。服务启动时会检测常见的注入变量名并拒绝启动；这些凭据只能经 PKCE 授权流程获取，并以 AES-256-GCM 加密入库。
 

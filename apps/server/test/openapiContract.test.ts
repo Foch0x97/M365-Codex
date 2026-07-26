@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import Ajv2020Cjs from 'ajv/dist/2020.js';
@@ -136,6 +138,78 @@ describe('契约：SSE 完成事件里的 response 符合 schema', () => {
     const data = JSON.parse(dataLine!.slice('data: '.length)) as { response: unknown };
     const validate = validator('Response');
     const ok = validate(data.response);
+    if (!ok) throw new Error(`不符合契约: ${JSON.stringify(validate.errors)}`);
+    expect(ok).toBe(true);
+  });
+});
+
+describe('契约：POST /v1/chat/completions（M6）', () => {
+  it('非流式响应符合 ChatCompletionResponse schema', async () => {
+    const { h, apiKey } = await setup();
+    const res = await h.app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: auth(apiKey),
+      payload: { model: 'gpt-5-codex', messages: [{ role: 'user', content: 'q' }] },
+    });
+    const validate = validator('ChatCompletionResponse');
+    const ok = validate(res.json());
+    if (!ok) throw new Error(`不符合契约: ${JSON.stringify(validate.errors)}`);
+    expect(ok).toBe(true);
+  });
+});
+
+describe('契约：Files / Uploads（M6）', () => {
+  let dataDir: string | undefined;
+
+  afterEach(() => {
+    if (dataDir !== undefined) rmSync(dataDir, { recursive: true, force: true });
+    dataDir = undefined;
+  });
+
+  it('POST /v1/files 响应符合 FileObject schema，GET /v1/files 符合 FileList schema', async () => {
+    dataDir = mkdtempSync(join(tmpdir(), 'm365-codex-openapi-files-'));
+    harness = await createTestHarness({ DATA_DIR: dataDir });
+    const key = harness.context.apiKeys.create({ name: 'k' });
+
+    const boundary = '----contractTestBoundary';
+    const body = Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="a.txt"\r\nContent-Type: text/plain\r\n\r\nhello\r\n--${boundary}--\r\n`,
+      'utf8',
+    );
+    const createRes = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/files',
+      headers: { authorization: `Bearer ${key.key}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    });
+    const validateFile = validator('FileObject');
+    const okFile = validateFile(createRes.json());
+    if (!okFile) throw new Error(`不符合契约: ${JSON.stringify(validateFile.errors)}`);
+    expect(okFile).toBe(true);
+
+    const listRes = await harness.app.inject({
+      method: 'GET',
+      url: '/v1/files',
+      headers: { authorization: `Bearer ${key.key}` },
+    });
+    const validateList = validator('FileList');
+    expect(validateList(listRes.json())).toBe(true);
+  });
+
+  it('POST /v1/uploads 响应符合 UploadObject schema', async () => {
+    dataDir = mkdtempSync(join(tmpdir(), 'm365-codex-openapi-uploads-'));
+    harness = await createTestHarness({ DATA_DIR: dataDir });
+    const key = harness.context.apiKeys.create({ name: 'k' });
+
+    const res = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/uploads',
+      headers: { authorization: `Bearer ${key.key}` },
+      payload: { filename: 'a.txt', purpose: 'user_data', bytes: 5 },
+    });
+    const validate = validator('UploadObject');
+    const ok = validate(res.json());
     if (!ok) throw new Error(`不符合契约: ${JSON.stringify(validate.errors)}`);
     expect(ok).toBe(true);
   });
