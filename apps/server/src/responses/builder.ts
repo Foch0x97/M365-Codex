@@ -408,6 +408,10 @@ export class ResponseStreamBuilder {
   /** 组装一个带单调 sequence_number 与 response_id 的 SSE 事件。 */
   #event(name: SseEvent['event'], data: Record<string, unknown>): SseEvent {
     const payload: Record<string, unknown> = {
+      // `type` 必须写进 data 里：OpenAI 官方 SSE 就是这么发的，而真实客户端
+      // （codex-cli 实测）只解析 data 的 JSON、按其中的 type 分发，根本不看
+      // SSE 的 event: 行。少了它客户端会一直等不到 response.completed。
+      type: name,
       ...data,
       sequence_number: this.#seq++,
       response_id: this.#response.id,

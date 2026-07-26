@@ -51,6 +51,20 @@ describe('sequence_number 单调', () => {
     const events = runFull([{ kind: 'text_delta', text: 'x' }]);
     expect(events.every((e) => e.data.response_id === 'resp_test')).toBe(true);
   });
+
+  // 真实客户端（codex-cli 实测）只解析 data 里的 JSON、按其中的 type 分发，
+  // 不看 SSE 的 event: 行。少了这个字段，客户端会一直等不到 response.completed。
+  it('每个事件的 data 里都有与事件名一致的 type', () => {
+    const events = runFull([
+      { kind: 'reasoning_delta', text: '想一下' },
+      { kind: 'text_delta', text: '你好' },
+      { kind: 'citation', url: 'https://example.invalid/a', title: 'A' },
+    ]);
+    expect(events.length).toBeGreaterThan(5);
+    for (const event of events) {
+      expect(event.data.type).toBe(event.event);
+    }
+  });
 });
 
 describe('事件顺序', () => {
