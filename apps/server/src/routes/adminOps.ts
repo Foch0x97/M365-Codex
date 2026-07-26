@@ -383,7 +383,9 @@ export function registerAdminOpsRoutes(app: FastifyInstance, context: AppContext
   // 2.7 模型与能力矩阵
   // ---------------------------------------------------------------------
   app.get('/admin/capabilities', { preHandler: adminGuard }, async () => {
-    const models = loadModels().data.map((m) => ({ id: m.id, source: m.owned_by }));
+    const models = loadModels(undefined, (reason) => context.logger.warn({ reason }, '模型目录降级')).data.map(
+      (m) => ({ id: m.id, source: m.owned_by }),
+    );
     return { models, matrix: buildCapabilityMatrix(context) };
   });
 }

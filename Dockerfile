@@ -58,6 +58,9 @@ COPY --from=builder /app/apps/server/dist ./apps/server/dist
 COPY --from=builder /app/apps/server/node_modules ./apps/server/node_modules
 # 管理界面只需要构建产物，不带前端的 node_modules
 COPY --from=builder /app/apps/web/dist ./apps/web/dist
+# 模型目录：运行时由 responses/models.ts 读取。漏拷这一份的后果是静默降级成
+# 只含一个模型的内置目录——线上曾因此只返回 1 个模型而配置里有 3 个。
+COPY config ./config
 
 # node 镜像自带 uid/gid 1000 的 node 用户；数据目录需归它所有
 RUN mkdir -p /data && chown -R node:node /data /app
