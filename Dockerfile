@@ -22,6 +22,12 @@ RUN npm run build
 # 只保留生产依赖
 RUN npm prune --omit=dev
 
+# workspace 依赖不一定都能提升到根 node_modules：根目录被某个版本占位时
+# （例如 eslint 依赖的 ajv@6），真正要用的版本会装在 apps/server/node_modules 下。
+# 运行阶段必须把这一层也带上，否则容器起来就 ERR_MODULE_NOT_FOUND。
+# 先建空目录，保证下面的 COPY 在依赖全部提升时也不会失败。
+RUN mkdir -p apps/server/node_modules packages/shared/node_modules
+
 # ---------- 运行阶段 ----------
 FROM node:24-alpine AS runtime
 WORKDIR /app
@@ -37,8 +43,10 @@ COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages/shared/package.json ./packages/shared/package.json
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/packages/shared/node_modules ./packages/shared/node_modules
 COPY --from=builder /app/apps/server/package.json ./apps/server/package.json
 COPY --from=builder /app/apps/server/dist ./apps/server/dist
+COPY --from=builder /app/apps/server/node_modules ./apps/server/node_modules
 
 # node 镜像自带 uid/gid 1000 的 node 用户；数据目录需归它所有
 RUN mkdir -p /data && chown -R node:node /data /app
