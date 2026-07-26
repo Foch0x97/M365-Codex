@@ -116,6 +116,17 @@ jobs:
           echo "healthz: $(curl -fsS http://127.0.0.1:8080/healthz)"
           echo "readyz:  $(curl -fsS http://127.0.0.1:8080/readyz)"
 
+          # 模型目录必须真的进了镜像。读不到时代码会静默退回只含一个模型的内置目录，
+          # 线上曾因此只返回 1 个模型而 config/models.json 里有 3 个——用条数比对钉住。
+          echo "校验模型目录条数与 config/models.json 一致"
+          EXPECTED=$(node -e "console.log(require('./config/models.json').data.length)")
+          ACTUAL=$(docker exec m365-codex-ci node -e "console.log(require('/app/config/models.json').data.length)")
+          echo "  期望 $EXPECTED 条，镜像内 $ACTUAL 条"
+          test "$EXPECTED" = "$ACTUAL"
+
+          echo "校验管理界面构建产物已随镜像发布"
+          curl -fsS http://127.0.0.1:8080/ui/ | grep -q 'id="root"'
+
           echo "验证非 root 运行"
           test "$(docker exec m365-codex-ci id -u)" != "0"
 

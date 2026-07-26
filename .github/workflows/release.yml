@@ -27,11 +27,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 发布门禁。计划要求「高危漏洞、凭据扫描失败、测试失败都必须阻止发布」，
+  # 但 ci.yml 只在 push 到 main 与 PR 时触发——**打版本标签这条路径根本不会跑 CI**。
+  # 所以这里在发布链路上把同样的检查再跑一遍，并让 publish 依赖它。
+  gate:
+    name: 发布前门禁（类型 / Lint / 测试 / 漏洞 / 凭据）
+    runs-on: ubuntu-latest
+    if: ${{ vars.DOCKERHUB_REPOSITORY != '' }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm audit --audit-level=high
+      - name: 管理界面检查
+        run: |
+          npm ci --prefix apps/web
+          npm run typecheck:web
+          npm run test:web
+          npm run build --prefix apps/web
+      - name: 凭据扫描
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -Ev '(^|/)\.env\.example$' | grep -E '(^|/)(\.env($|\.)|accounts?\.json|tokens?\.json|cookies\.txt)'; then
+            echo "::error::检测到疑似凭据文件"
+            exit 1
+          fi
+          if git grep -nIE '(sk-[0-9A-Za-z]{48,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.)' -- ':!*.md' ':!.github/workflows/*'; then
+            echo "::error::检测到疑似硬编码密钥"
+            exit 1
+          fi
+          echo "凭据扫描通过"
+
   publish:
     name: 构建并推送多架构镜像到 Docker Hub
     runs-on: ubuntu-latest
     # 未配置 Docker Hub 仓库变量时跳过（例如 fork），避免无谓失败
     if: ${{ vars.DOCKERHUB_REPOSITORY != '' }}
+    needs: gate
+    # 发布环境：可在仓库设置里给它挂必需审批人（计划 §20.3）
+    environment: release
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -57,8 +99,10 @@ jobs:
             type=sha,prefix=sha-
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            # latest 跟随任意 v* 版本 tag 或正式 Release
-            type=raw,value=latest,enable=${{ github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{major}}
+            # latest **只**跟正式 Release。之前把裸 v* 标签也算进来，等于误打一个
+            # 标签就会悄悄覆盖 latest，与本文件开头声明的规则自相矛盾。
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
 
       - name: 安装 cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
