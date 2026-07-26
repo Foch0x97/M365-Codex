@@ -9,3 +9,9 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# 构建产物（tsc 误输出到源码目录时产生）
+dist/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts

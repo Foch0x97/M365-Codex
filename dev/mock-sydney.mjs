@@ -90,6 +90,7 @@ let invocations = 0;
 
 wss.on('connection', (ws) => {
   connections += 1;
+  console.log(`[mock] 新连接，当前 ${connections} 条`);
   let handshakeDone = false;
 
   ws.on('message', (data) => {
