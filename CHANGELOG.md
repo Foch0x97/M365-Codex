@@ -10,9 +10,30 @@
 
 ## [未发布]
 
-### 计划中
+用真实 codex-cli 0.145.0 对着部署好的容器实跑，抓出并修掉了一批只有真实客户端
+才会暴露的问题。
 
-- M6：文件/图片/Office-PDF + Chat Completions
+### 修复
+
+- **运行镜像缺少 workspace 内层依赖**：npm workspaces 的依赖不一定都提升到根
+  `node_modules`（根目录被 eslint 的 ajv@6 占位时，apps/server 要用的 ajv@8 会装在
+  `apps/server/node_modules`），而运行阶段只复制了根目录那一层，导致 v0.5.0 的镜像
+  **启动即崩溃**（`ERR_MODULE_NOT_FOUND: ajv`）。现在两层都复制。
+- **SSE 事件的 `data` 里没有 `type`**：事件名只写在 SSE 的 `event:` 行上，而真实客户端
+  只解析 `data` 的 JSON 并按其中的 `type` 分发，于是一个事件都认不出来，直到流结束都
+  等不到 `response.completed`。现已按 OpenAI 的实际发法两处都写。
+- **工具声明形态不兼容**：真实 Codex 一次会发 `type=function`、`type=namespace`
+  （一组子工具）和 `type=web_search`（OpenAI 托管工具）。此前只认 function，其余一律
+  422，导致默认配置的 Codex 完全用不了。现在 namespace 按子工具摊平登记；托管工具
+  跳过而非报错，并通过日志与 `x-m365-codex-skipped-tools` 响应头明确告知调用方。
+- **版本号有第二处真源**：`APP_VERSION` 是手写常量，v0.5.0 发布时漏更，`/healthz`
+  报的还是 0.4.1。改为运行时读 `package.json`。
+
+### 新增
+
+- `dev/mock-sydney.mjs`：独立的模拟 Sydney 上游；`dev/seed-mock-account.mjs`：写入假账号。
+  两者配合可在**没有真实 M365 账号**的前提下把整条链路跑起来做验收（不进生产镜像）。
+- CI 补齐发布安全门禁：CodeQL、镜像漏洞扫描（HIGH/CRITICAL 阻断）、cosign 无密钥签名。
 
 ---
 
