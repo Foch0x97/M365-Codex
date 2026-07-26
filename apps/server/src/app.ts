@@ -5,6 +5,7 @@ import type { AppContext } from './context.js';
 import { registerAccountRoutes } from './routes/accounts.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerUiRoutes } from './routes/ui.js';
 import { registerV1Routes } from './routes/v1.js';
 
 /** 组装 Fastify 应用。测试通过 `app.inject()` 直接调用，无需真实监听端口。 */
@@ -105,6 +106,8 @@ export function buildApp(context: AppContext, options: BuildAppOptions = {}): Fa
   registerAdminRoutes(app, context);
   registerAccountRoutes(app, context);
   registerV1Routes(app, context);
+  // 放在最后注册：/ui/* 是通配路由，前面那些显式路由要先匹配
+  registerUiRoutes(app);
 
   return app;
 }
