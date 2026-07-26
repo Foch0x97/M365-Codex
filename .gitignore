@@ -45,3 +45,9 @@ tmp/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 内部/编码 agent 文档：只在本地保留，不在 GitHub 公开展示
+M365-Codex-实施执行计划.md
+AGENTS.md
+CLAUDE.md
+docs/里程碑进度.md
