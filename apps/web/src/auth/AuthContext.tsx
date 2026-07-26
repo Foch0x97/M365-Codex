@@ -81,8 +81,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch(() => {
         clearSession();
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // clearSession 由 useCallback([]) 生成，引用恒定，加入依赖不会导致这个「仅挂载时执行一次」的
+    // 效果重复触发；但它确实在效果体内被使用，因此如实列出。
+  }, [clearSession]);
 
   const login = useCallback(async (password: string) => {
     const res = await api.login(password);

@@ -24,6 +24,19 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 /**
+ * 把设置项的值渲染成输入框里能看的文本。这里是给人看的展示值，不是给机器看的序列化——
+ * 按值的真实类型分别处理，不用 JSON.stringify 或裸 String() 一刀切，
+ * 避免普通对象被渲染成没有信息量的 `[object Object]`。
+ */
+function formatSettingValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map((item) => formatSettingValue(item)).join(' ');
+  return '';
+}
+
+/**
  * 设置分组的通用渲染器：一个分组一个卡片，字段元数据由调用方传入（服务端只返回
  * {value, source, editable, requires_restart}，不返回展示用的标签，所以标签维护在前端）。
  *
@@ -212,7 +225,7 @@ function SettingInput({
     return (
       <select
         id={id}
-        value={String(value ?? '')}
+        value={formatSettingValue(value)}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
       >
@@ -231,7 +244,7 @@ function SettingInput({
         type="number"
         min={meta.min}
         max={meta.max}
-        value={value === null || value === undefined ? '' : String(value)}
+        value={formatSettingValue(value)}
         disabled={disabled}
         onChange={(e) => {
           if (e.target.value === '') {
@@ -270,7 +283,7 @@ function SettingInput({
     <input
       id={id}
       type="text"
-      value={value === null || value === undefined ? '' : String(value)}
+      value={formatSettingValue(value)}
       disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
     />

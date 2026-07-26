@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router';
+import { Link } from 'react-router';
 import { api, type AuthorizeUrlResponse, type OAuthCallbackResult } from '../api';
 import { CopyButton } from '../components/CopyButton';
 import { ErrorBanner } from '../components/ErrorBanner';
@@ -12,7 +12,6 @@ import { formatDateTime } from '../util/format';
  * 用户在浏览器完成登录后，把地址栏的完整 URL 贴回来即可。
  */
 export function AddAccountPage() {
-  const navigate = useNavigate();
   const [session, setSession] = useState<AuthorizeUrlResponse | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<unknown>(null);
@@ -117,9 +116,11 @@ export function AddAccountPage() {
               {result.account.status}）
             </div>
             <div style={{ marginTop: 10 }}>
-              <button type="button" className="btn btn-sm" onClick={() => navigate('/accounts')}>
+              {/* 纯粹的页面跳转，用声明式的 Link 而不是 onClick 里手动 navigate()——
+                  后者返回 void | Promise<void>，塞进事件处理器还得额外处理这个基本不会拒绝的 Promise。 */}
+              <Link to="/accounts" className="btn btn-sm">
                 前往账号列表
-              </button>
+              </Link>
             </div>
           </div>
         )}

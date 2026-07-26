@@ -1,12 +1,11 @@
 import { useState, type FormEvent } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router';
+import { Navigate, useLocation } from 'react-router';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { ThemeToggle } from '../components/ThemeToggle';
 
 export function LoginPage() {
   const { login, status } = useAuth();
-  const navigate = useNavigate();
   const location = useLocation();
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -21,11 +20,10 @@ export function LoginPage() {
     event.preventDefault();
     setSubmitting(true);
     setError(null);
+    // 登录成功后不用在这里手动 navigate：login() 内部会把 status 切到 'authenticated'，
+    // 组件顶部已有的 `status === 'authenticated'` 分支会在下一次渲染里用 <Navigate> 跳转，
+    // 两处各写一遍反而是重复的命令式/声明式跳转并存，登录失败的路径也不会受影响。
     login(password)
-      .then(() => {
-        const from = (location.state as { from?: string } | null)?.from ?? '/overview';
-        navigate(from, { replace: true });
-      })
       .catch((err: unknown) => setError(err))
       .finally(() => setSubmitting(false));
   };

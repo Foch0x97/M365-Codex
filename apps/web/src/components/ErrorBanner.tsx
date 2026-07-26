@@ -9,7 +9,7 @@ export function ErrorBanner({ error, onRetry }: { error: unknown; onRetry?: () =
 
   const isApiError = error instanceof ApiRequestError;
   const title = isApiError ? apiErrorTypeLabel(error.body.error.type) : '发生错误';
-  const message = error instanceof Error ? error.message : String(error);
+  const message = describeUnknownError(error);
   const requestId = isApiError ? error.body.error.request_id : null;
   const param = isApiError ? error.body.error.param : null;
 
@@ -19,7 +19,7 @@ export function ErrorBanner({ error, onRetry }: { error: unknown; onRetry?: () =
       <div>{message}</div>
       {(requestId !== null || param !== null) && (
         <div className="error-meta">
-          {param !== null && <span>相关字段：{param}　</span>}
+          {param !== null && <span>相关字段：{param}{'　'}</span>}
           {requestId !== null && <span className="mono">request_id: {requestId}</span>}
         </div>
       )}
@@ -32,6 +32,21 @@ export function ErrorBanner({ error, onRetry }: { error: unknown; onRetry?: () =
       )}
     </div>
   );
+}
+
+/**
+ * 把任意 catch 到的值转成给人看的一行文本。`error` 类型是 `unknown`，不能无脑 String()——
+ * 那样一个普通对象会渲染成没有信息量的 `[object Object]`，按真实类型分别处理。
+ */
+function describeUnknownError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (typeof error === 'number' || typeof error === 'boolean') return String(error);
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return '未知错误';
+  }
 }
 
 function apiErrorTypeLabel(type: string): string {
