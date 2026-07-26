@@ -38,7 +38,16 @@ export interface ReasoningOutputItem {
   summary: ReasoningSummaryText[];
 }
 
-export type OutputItem = ReasoningOutputItem | MessageOutputItem;
+export interface FunctionCallOutputItem {
+  id: string;
+  type: 'function_call';
+  call_id: string;
+  name: string;
+  arguments: string;
+  status: 'in_progress' | 'completed';
+}
+
+export type OutputItem = ReasoningOutputItem | MessageOutputItem | FunctionCallOutputItem;
 
 export interface ResponseError {
   code: string;

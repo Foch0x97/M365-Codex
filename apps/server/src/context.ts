@@ -16,6 +16,7 @@ import { ApiKeyRepository } from './repo/apiKeys.js';
 import { AuditLogRepository } from './repo/auditLogs.js';
 import { OAuthSessionRepository } from './repo/oauthSessions.js';
 import { ResponseRepository } from './repo/responses.js';
+import { ToolCallRepository } from './repo/toolCalls.js';
 import { InFlightRegistry } from './responses/inFlight.js';
 import { ResponsesService } from './responses/service.js';
 
@@ -42,6 +43,7 @@ export interface AppContext {
   readonly dispatcher: UpstreamDispatcher;
   readonly responses: ResponsesService;
   readonly responseRepo: ResponseRepository;
+  readonly toolCalls: ToolCallRepository;
   readonly inFlight: InFlightRegistry;
   readonly startedAt: number;
 }
@@ -81,7 +83,14 @@ export function createContext(options: CreateContextOptions): AppContext {
     proxyUrl: config.httpsProxy ?? config.httpProxy,
   });
   const responseRepo = new ResponseRepository(db);
-  const responsesService = new ResponsesService({ dispatcher, responses: responseRepo, logger });
+  const toolCallRepo = new ToolCallRepository(db);
+  const responsesService = new ResponsesService({
+    dispatcher,
+    responses: responseRepo,
+    toolCalls: toolCallRepo,
+    tools: config.tools,
+    logger,
+  });
   const inFlight = new InFlightRegistry();
 
   return {
@@ -103,6 +112,7 @@ export function createContext(options: CreateContextOptions): AppContext {
     dispatcher,
     responses: responsesService,
     responseRepo,
+    toolCalls: toolCallRepo,
     inFlight,
     startedAt: options.startedAt ?? Date.now(),
   };

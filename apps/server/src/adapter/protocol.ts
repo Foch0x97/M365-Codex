@@ -43,9 +43,28 @@ export type UpstreamEvent =
   | { kind: 'text_delta'; text: string }
   | { kind: 'reasoning_delta'; text: string }
   | { kind: 'citation'; url: string; title: string | null }
+  /** 工具调用开始：上游要求调用名为 name 的工具 */
+  | { kind: 'tool_call_begin'; callId: string; name: string }
+  /** 工具调用参数增量（JSON 字符串片段） */
+  | { kind: 'tool_call_args_delta'; callId: string; delta: string }
+  /** 工具调用结束：参数已完整 */
+  | { kind: 'tool_call_end'; callId: string }
   | { kind: 'completed'; stopReason: string | null }
   | { kind: 'upstream_error'; message: string; retryable: boolean }
   | { kind: 'raw'; message: RawMessage };
+
+/** 声明给上游的工具（函数）。name + JSON Schema 参数。 */
+export interface ToolDeclaration {
+  name: string;
+  description?: string | undefined;
+  parameters?: Record<string, unknown> | undefined;
+}
+
+/** 回传给上游的工具执行结果，用于续推理。 */
+export interface ToolResultInput {
+  callId: string;
+  output: string;
+}
 
 export interface InvocationInput {
   invocationId: string;
@@ -55,6 +74,10 @@ export interface InvocationInput {
   conversationRef?: string | undefined;
   /** 透传的 model / reasoning.effort 等，原样带给上游，不改写 */
   passthrough?: Record<string, unknown>;
+  /** 本轮可用的工具声明（M5） */
+  tools?: readonly ToolDeclaration[] | undefined;
+  /** 工具执行结果回传（M5，续接时带上） */
+  toolResults?: readonly ToolResultInput[] | undefined;
 }
 
 /** 协议编解码接口。按 protocolVersion 选具体实现，便于 M0 后替换。 */

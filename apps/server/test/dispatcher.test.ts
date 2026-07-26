@@ -284,6 +284,37 @@ describe('已吐内容后失败不切换', () => {
   });
 });
 
+describe('副作用阶段不跨账号重放', () => {
+  it('携带工具结果的请求失败时不换账号重发', async () => {
+    const h = setup();
+    seed(h.accounts, 'a');
+    seed(h.accounts, 'b');
+    const urls: string[] = [];
+    const result = h
+      .makeDispatcher([{ kind: 'fail', disposition: 'retry_or_switch' }, { kind: 'success', chunks: ['x'] }], urls)
+      .dispatch({
+        text: 'hi',
+        sideEffect: true,
+        toolResults: [{ callId: 'call_1', output: '已删除 3 个文件' }],
+      });
+    await expect(drain(result.events)).rejects.toBeInstanceOf(ApiError);
+    // 同样的 retry_or_switch，非副作用请求会切到 b；副作用请求只连一次
+    expect(urls).toHaveLength(1);
+  });
+
+  it('同样的失败在非副作用请求上会切换账号', async () => {
+    const h = setup();
+    seed(h.accounts, 'a');
+    seed(h.accounts, 'b');
+    const urls: string[] = [];
+    const result = h
+      .makeDispatcher([{ kind: 'fail', disposition: 'retry_or_switch' }, { kind: 'success', chunks: ['x'] }], urls)
+      .dispatch({ text: 'hi' });
+    await drain(result.events);
+    expect(urls).toHaveLength(2);
+  });
+});
+
 describe('粘性', () => {
   it('优先复用绑定的账号', async () => {
     const h = setup();

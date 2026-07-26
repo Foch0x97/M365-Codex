@@ -37,6 +37,14 @@ interface MessageState {
   done: boolean;
 }
 
+interface FunctionCallState {
+  id: string;
+  callId: string;
+  name: string;
+  arguments: string;
+  index: number;
+}
+
 export interface BuilderInit {
   responseId: string;
   model: string;
@@ -54,6 +62,7 @@ export class ResponseStreamBuilder {
   #outputIndex = 0;
   #reasoning: ReasoningState | null = null;
   #message: MessageState | null = null;
+  readonly #functionCalls: FunctionCallState[] = [];
   #failed = false;
 
   constructor(init: BuilderInit) {
@@ -111,10 +120,74 @@ export class ResponseStreamBuilder {
           this.#response.error = { code: 'upstream_error', message: event.message };
         }
         return [];
+      case 'tool_call_begin':
+      case 'tool_call_args_delta':
+      case 'tool_call_end':
+        // 工具调用由服务层缓冲、校验/修复后再经 emitFunctionCall 发出，
+        // 不直接经 consume（这样才能在发给客户端前做参数校验）
+        return [];
       case 'completed':
       case 'raw':
         return [];
     }
+  }
+
+  /**
+   * 发出一次已校验的工具调用（function_call）。
+   * 在 message 之后作为独立 output 项，带完整参数的 delta + done。
+   * 由服务层在参数校验/修复通过后调用。
+   */
+  emitFunctionCall(callId: string, name: string, argumentsJson: string): SseEvent[] {
+    const events: SseEvent[] = [];
+    // 先收尾可能开着的 reasoning / message
+    events.push(...this.#closeReasoning());
+    events.push(...this.#closeMessage());
+
+    const state: FunctionCallState = {
+      id: makeId('fc'),
+      callId,
+      name,
+      arguments: argumentsJson,
+      index: this.#outputIndex++,
+    };
+    this.#functionCalls.push(state);
+
+    events.push(
+      this.#event(SSE_EVENTS.OUTPUT_ITEM_ADDED, {
+        output_index: state.index,
+        item: {
+          id: state.id,
+          type: 'function_call',
+          call_id: state.callId,
+          name: state.name,
+          arguments: '',
+          status: 'in_progress',
+        },
+      }),
+    );
+    events.push(
+      this.#event(SSE_EVENTS.FUNCTION_CALL_ARGS_DELTA, {
+        item_id: state.id,
+        output_index: state.index,
+        call_id: state.callId,
+        delta: argumentsJson,
+      }),
+    );
+    events.push(
+      this.#event(SSE_EVENTS.FUNCTION_CALL_ARGS_DONE, {
+        item_id: state.id,
+        output_index: state.index,
+        call_id: state.callId,
+        arguments: argumentsJson,
+      }),
+    );
+    events.push(
+      this.#event(SSE_EVENTS.OUTPUT_ITEM_DONE, {
+        output_index: state.index,
+        item: this.#functionCallItem(state),
+      }),
+    );
+    return events;
   }
 
   /** 正常收尾：关闭已开项 + response.completed。 */
@@ -124,8 +197,9 @@ export class ResponseStreamBuilder {
     }
     const events: SseEvent[] = [];
     events.push(...this.#closeReasoning());
-    // 即使没有任何文本，也确保有一个 message 项，保持 output 非空
-    if (this.#message === null) {
+    // 没有文本、也没有工具调用时，才补一个空 message 保持 output 非空；
+    // 有工具调用时 output 已非空，不强塞空 message
+    if (this.#message === null && this.#functionCalls.length === 0) {
       events.push(...this.#openMessage());
     }
     events.push(...this.#closeMessage());
@@ -302,6 +376,17 @@ export class ResponseStreamBuilder {
     };
   }
 
+  #functionCallItem(state: FunctionCallState): OutputItem {
+    return {
+      id: state.id,
+      type: 'function_call',
+      call_id: state.callId,
+      name: state.name,
+      arguments: state.arguments,
+      status: 'completed',
+    };
+  }
+
   #buildOutput(): OutputItem[] {
     const output: OutputItem[] = [];
     if (this.#reasoning !== null) {
@@ -313,6 +398,9 @@ export class ResponseStreamBuilder {
     }
     if (this.#message !== null) {
       output.push(this.#messageItem(this.#message, this.#message.done ? 'completed' : 'in_progress'));
+    }
+    for (const call of this.#functionCalls) {
+      output.push(this.#functionCallItem(call));
     }
     return output;
   }

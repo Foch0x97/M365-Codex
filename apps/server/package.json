@@ -1,6 +1,6 @@
 {
   "name": "@m365-codex/server",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "main": "./dist/server.js",
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@m365-codex/shared": "*",
+    "ajv": "^8.20.0",
     "fastify": "^5.2.0",
     "https-proxy-agent": "^7.0.6",
     "pino": "^9.6.0",
@@ -24,7 +25,6 @@
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",
-    "ajv": "^8.20.0",
     "pino-pretty": "^13.0.0"
   }
 }

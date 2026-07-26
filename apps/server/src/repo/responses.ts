@@ -17,6 +17,10 @@ export interface ResponseRow {
   idempotency_key: string | null;
   body: string | null;
   error_message: string | null;
+  /** 本 Response 处在对话链的第几轮工具调用（§7.4 最大工具轮次） */
+  tool_round: number;
+  /** 本对话链累计发出的工具调用数（§7.4 最大累计工具调用数） */
+  tool_calls_total: number;
   created_at: number;
   updated_at: number;
 }
@@ -37,6 +41,9 @@ export interface CreateResponseInput {
   upstreamModelParameter: string | null;
   previousResponseId: string | null;
   idempotencyKey: string | null;
+  /** 继承自上一轮的计数；新对话为 0 */
+  toolRound?: number;
+  toolCallsTotal?: number;
 }
 
 export class ResponseRepository {
@@ -51,8 +58,9 @@ export class ResponseRepository {
       .prepare(
         `INSERT INTO responses (
            id, api_key_id, status, requested_model, requested_reasoning_effort,
-           upstream_model_parameter, previous_response_id, idempotency_key, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           upstream_model_parameter, previous_response_id, idempotency_key,
+           tool_round, tool_calls_total, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -63,9 +71,18 @@ export class ResponseRepository {
         input.upstreamModelParameter,
         input.previousResponseId,
         input.idempotencyKey,
+        input.toolRound ?? 0,
+        input.toolCallsTotal ?? 0,
         now,
         now,
       );
+  }
+
+  /** 记录本轮实际发出的工具调用数，供下一轮继承计数。 */
+  setToolCounters(id: string, round: number, total: number, now = Date.now()): void {
+    this.#db
+      .prepare('UPDATE responses SET tool_round = ?, tool_calls_total = ?, updated_at = ? WHERE id = ?')
+      .run(round, total, now, id);
   }
 
   findById(id: string): ResponseRow | undefined {

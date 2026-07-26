@@ -5,7 +5,7 @@
 [![CI](https://github.com/Foch0x97/M365-Codex/actions/workflows/ci.yml/badge.svg)](https://github.com/Foch0x97/M365-Codex/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**当前版本：`v0.4.0`（开发中，尚未发布可用版本）**
+**当前版本：`v0.5.0`（开发中，尚未发布可用版本）**
 
 ---
 
@@ -86,7 +86,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 docker pull foch0x97/m365-codex:latest
 ```
 
-标签规则：`latest` 跟随最新正式 Release；`0.4.1` / `0.4` 由版本 tag 产生；
+标签规则：`latest` 跟随最新正式 Release；`0.5.0` / `0.5` 由版本 tag 产生；
 `main` 与 `sha-<短哈希>` 跟随主分支最新提交。
 
 ```bash
@@ -145,6 +145,7 @@ wire_api = "responses"           # 只支持 responses，chat 已于 2026-02 移
 | `UPSTREAM_WS_BASE` | 否 | 上游 WebSocket 基址，用于应对端点漂移 |
 | `OAUTH_*` | 否 | OAuth 客户端 ID、端点与 scope，留空使用内置默认值 |
 | `UPSTREAM_*` | 否 | 上游路径模板、协议版本、心跳/超时/重连 |
+| `TOOLS_*` | 否 | 工具调用方式（`native`/`prompt`/`auto`）与代理循环上限：每轮调用数、轮次、累计调用数、结果大小、参数修复次数 |
 
 **严禁**通过环境变量注入任何 Microsoft Token 或 OAuth 凭据。服务启动时会检测常见的注入变量名并拒绝启动；这些凭据只能经 PKCE 授权流程获取，并以 AES-256-GCM 加密入库。
 

@@ -23,7 +23,13 @@ export type MockBehavior =
   /** 握手后什么都不发，触发空闲超时 */
   | { kind: 'idle' }
   /** completion 里带错误 */
-  | { kind: 'completion-error'; message: string };
+  | { kind: 'completion-error'; message: string }
+  /** 回一个工具调用 */
+  | { kind: 'tool-call'; callId: string; name: string; arguments: string }
+  /** 一次回多个工具调用（测并行与每轮上限） */
+  | { kind: 'tool-calls'; calls: { callId: string; name: string; arguments: string }[] }
+  /** 第一次 invocation 回 badArgs，之后回 goodArgs（测参数修复） */
+  | { kind: 'tool-call-repair'; callId: string; name: string; badArgs: string; goodArgs: string };
 
 export interface MockSydneyServer {
   url: string;
@@ -33,6 +39,8 @@ export interface MockSydneyServer {
   invocationTexts: string[];
   /** 建立过的连接数 */
   connectionCount: number;
+  /** 收到的 invocation 数（跨连接） */
+  invocationCount: number;
   /** 收到的 ping 数 */
   pingCount: number;
   setBehavior: (behavior: MockBehavior) => void;
@@ -50,6 +58,7 @@ export async function startMockSydneyServer(initial: MockBehavior): Promise<Mock
     invocationTexts: [] as string[],
     connectionCount: 0,
     pingCount: 0,
+    invocationCount: 0,
   };
 
   const httpServer: Server = createServer((_req, res) => {
@@ -108,14 +117,46 @@ export async function startMockSydneyServer(initial: MockBehavior): Promise<Mock
           const arg = (msg.arguments?.[0] ?? {}) as { messages?: { text?: string; author?: string }[] };
           const userMsg = arg.messages?.find((m) => m.author === 'user');
           state.invocationTexts.push(userMsg?.text ?? '');
-          void runBehavior(ws, msg.invocationId ?? 'inv');
+          state.invocationCount += 1;
+          void runBehavior(ws, msg.invocationId ?? 'inv', state.invocationCount);
         }
       }
     });
   });
 
-  async function runBehavior(ws: WebSocket, invocationId: string): Promise<void> {
+  function sendToolCall(ws: WebSocket, invocationId: string, callId: string, name: string, args: string): void {
+    ws.send(
+      frame({
+        type: MESSAGE_TYPE.STREAM_ITEM,
+        invocationId,
+        arguments: [{ messages: [{ author: 'bot', toolCalls: [{ callId, name, arguments: args }] }] }],
+      }),
+    );
+    ws.send(frame({ type: MESSAGE_TYPE.COMPLETION, invocationId }));
+  }
+
+  async function runBehavior(ws: WebSocket, invocationId: string, invocationCount: number): Promise<void> {
     switch (behavior.kind) {
+      case 'tool-call': {
+        sendToolCall(ws, invocationId, behavior.callId, behavior.name, behavior.arguments);
+        break;
+      }
+      case 'tool-calls': {
+        ws.send(
+          frame({
+            type: MESSAGE_TYPE.STREAM_ITEM,
+            invocationId,
+            arguments: [{ messages: [{ author: 'bot', toolCalls: behavior.calls }] }],
+          }),
+        );
+        ws.send(frame({ type: MESSAGE_TYPE.COMPLETION, invocationId }));
+        break;
+      }
+      case 'tool-call-repair': {
+        const args = invocationCount === 1 ? behavior.badArgs : behavior.goodArgs;
+        sendToolCall(ws, invocationId, behavior.callId, behavior.name, args);
+        break;
+      }
       case 'normal': {
         for (const chunk of behavior.chunks) {
           const message: Record<string, unknown> = {
@@ -179,6 +220,9 @@ export async function startMockSydneyServer(initial: MockBehavior): Promise<Mock
     },
     get connectionCount() {
       return state.connectionCount;
+    },
+    get invocationCount() {
+      return state.invocationCount;
     },
     get pingCount() {
       return state.pingCount;

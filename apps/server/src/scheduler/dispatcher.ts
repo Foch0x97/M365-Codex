@@ -4,7 +4,12 @@ import type { Logger } from 'pino';
 import type { UpstreamConfig } from '../config/index.js';
 import { buildUpstreamUrl } from '../adapter/endpoint.js';
 import { UpstreamError } from '../adapter/errors.js';
-import type { ProtocolCodec, UpstreamEvent } from '../adapter/protocol.js';
+import type {
+  ProtocolCodec,
+  ToolDeclaration,
+  ToolResultInput,
+  UpstreamEvent,
+} from '../adapter/protocol.js';
 import { SydneyConnection, type ConnectionDeps } from '../adapter/connection.js';
 import type { AccountRepository } from '../repo/accounts.js';
 import { TokenUnavailableError, type TokenManager } from '../oauth/tokenManager.js';
@@ -33,6 +38,15 @@ export interface DispatchRequest {
   sticky?: { accountId: string; conversationRef: string | null } | null;
   /** 透传给上游的参数（model / reasoning.effort 等，不改写） */
   passthrough?: Record<string, unknown> | undefined;
+  /** 本轮可用的工具声明（M5） */
+  tools?: readonly ToolDeclaration[] | undefined;
+  /** 工具执行结果回传（M5，续接时带上） */
+  toolResults?: readonly ToolResultInput[] | undefined;
+  /**
+   * 本次请求是否可能触发副作用（携带工具结果回传时为真）。
+   * 副作用阶段禁止自动跨账号重放——一旦失败不切换账号，如实抛出。
+   */
+  sideEffect?: boolean | undefined;
   signal?: AbortSignal | undefined;
 }
 
@@ -167,9 +181,17 @@ export class UpstreamDispatcher {
             text: request.text,
             conversationRef: state.conversationRef ?? undefined,
             passthrough: request.passthrough,
+            tools: request.tools,
+            toolResults: request.toolResults,
             signal: request.signal,
           })) {
-            if (event.kind === 'text_delta' || event.kind === 'reasoning_delta') {
+            // 文本、推理、工具调用都算「已产出内容」——之后失败不再切换账号，
+            // 避免副作用工具调用被跨账号重放执行（§M5）
+            if (
+              event.kind === 'text_delta' ||
+              event.kind === 'reasoning_delta' ||
+              event.kind === 'tool_call_begin'
+            ) {
               emittedContent = true;
             }
             if (event.kind === 'upstream_error' && !event.retryable) {
@@ -194,6 +216,13 @@ export class UpstreamDispatcher {
 
           // 已经吐过内容就不能干净切换，如实抛出
           if (emittedContent) {
+            this.#deps.accounts.recordFailure(account.id, upstreamError.disposition);
+            throw this.#toApiError(upstreamError);
+          }
+
+          // 副作用请求（回传工具结果）禁止跨账号重放：即便还没吐内容，
+          // 换账号重发也可能让已执行过的副作用工具再执行一次，故直接失败
+          if (request.sideEffect === true) {
             this.#deps.accounts.recordFailure(account.id, upstreamError.disposition);
             throw this.#toApiError(upstreamError);
           }

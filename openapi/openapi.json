@@ -144,6 +144,8 @@
           "instructions": { "type": "string" },
           "stream": { "type": "boolean" },
           "tools": { "type": "array" },
+          "tool_choice": {},
+          "parallel_tool_calls": { "type": "boolean" },
           "previous_response_id": { "type": "string" },
           "metadata": { "type": "object", "additionalProperties": { "type": "string" } },
           "max_output_tokens": { "type": "integer" },
@@ -198,6 +200,18 @@
           }
         }
       },
+      "FunctionCallItem": {
+        "type": "object",
+        "required": ["id", "type", "call_id", "name", "arguments", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "const": "function_call" },
+          "call_id": { "type": "string" },
+          "name": { "type": "string" },
+          "arguments": { "type": "string" },
+          "status": { "type": "string", "enum": ["in_progress", "completed"] }
+        }
+      },
       "Response": {
         "type": "object",
         "required": ["id", "object", "created_at", "status", "model", "output"],
@@ -215,7 +229,8 @@
             "items": {
               "oneOf": [
                 { "$ref": "#/components/schemas/ReasoningItem" },
-                { "$ref": "#/components/schemas/MessageItem" }
+                { "$ref": "#/components/schemas/MessageItem" },
+                { "$ref": "#/components/schemas/FunctionCallItem" }
               ]
             }
           },

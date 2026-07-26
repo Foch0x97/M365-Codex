@@ -5,7 +5,14 @@ import type { UpstreamConfig } from '../config/index.js';
 import { AsyncQueue } from './asyncQueue.js';
 import { redactWsUrl } from './endpoint.js';
 import { classifyCloseCode, classifyHttpStatus, UpstreamError } from './errors.js';
-import { FrameReassembler, MESSAGE_TYPE, type ProtocolCodec, type UpstreamEvent } from './protocol.js';
+import {
+  FrameReassembler,
+  MESSAGE_TYPE,
+  type ProtocolCodec,
+  type ToolDeclaration,
+  type ToolResultInput,
+  type UpstreamEvent,
+} from './protocol.js';
 
 /**
  * 单次上游对话连接。
@@ -34,6 +41,8 @@ export interface RunInput {
   text: string;
   conversationRef?: string | undefined;
   passthrough?: Record<string, unknown> | undefined;
+  tools?: readonly ToolDeclaration[] | undefined;
+  toolResults?: readonly ToolResultInput[] | undefined;
   /** 外部取消信号：中止后连接会向上游发取消帧并关闭 */
   signal?: AbortSignal | undefined;
 }
@@ -104,6 +113,8 @@ export class SydneyConnection {
               text: input.text,
               conversationRef: input.conversationRef,
               passthrough: input.passthrough,
+              tools: input.tools,
+              toolResults: input.toolResults,
             }),
           );
           return;

@@ -72,36 +72,38 @@ export function parseResponsesRequest(payload: unknown): ResponsesRequest {
   return result.data;
 }
 
+export interface ToolResult {
+  callId: string;
+  output: string;
+}
+
 export interface ExtractedInput {
   /** 拼接后的用户文本 */
   text: string;
   /** instructions（系统指令），若有 */
   instructions: string | null;
-  /** 是否包含工具输出（M5 才能真正处理） */
-  hasFunctionCallOutput: boolean;
+  /** 工具执行结果回传（M5，续接时携带） */
+  toolResults: ToolResult[];
 }
 
 /**
- * 从 input 中提取纯文本。
- * M4 只支持文本；遇到图片/文件输入返回 unsupported_feature（M6），
- * 遇到工具输出返回 unsupported_feature（M5）——都明确报错，不静默丢弃。
+ * 从 input 中提取纯文本与工具结果。
+ * M4/M5 支持文本与 function_call_output；遇到图片/文件输入返回
+ * unsupported_feature（M6）——明确报错，不静默丢弃。
  */
 export function extractInputText(request: ResponsesRequest): ExtractedInput {
   const instructions = request.instructions ?? null;
 
   if (typeof request.input === 'string') {
-    return { text: request.input, instructions, hasFunctionCallOutput: false };
+    return { text: request.input, instructions, toolResults: [] };
   }
 
   const segments: string[] = [];
+  const toolResults: ToolResult[] = [];
   for (const item of request.input) {
     if ('type' in item && item.type === 'function_call_output') {
-      throw new ApiError({
-        type: 'unsupported_feature',
-        status: 422,
-        message: '工具调用结果回传（function_call_output）将在 M5 支持',
-        param: 'input',
-      });
+      toolResults.push({ callId: item.call_id, output: item.output });
+      continue;
     }
 
     const message = item;
@@ -123,7 +125,7 @@ export function extractInputText(request: ResponsesRequest): ExtractedInput {
     }
   }
 
-  return { text: segments.join('\n\n'), instructions, hasFunctionCallOutput: false };
+  return { text: segments.join('\n\n'), instructions, toolResults };
 }
 
 /**

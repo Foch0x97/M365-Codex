@@ -103,6 +103,37 @@ describe('loadConfig', () => {
   it('拒绝非 ws(s) 的上游地址', () => {
     expect(() => loadConfig({ ...baseEnv, UPSTREAM_WS_BASE: 'https://example.com' })).toThrow(/ws\/wss/);
   });
+
+  it('工具循环限制有可用默认值', () => {
+    const { tools } = loadConfig(baseEnv);
+    expect(tools.mode).toBe('auto');
+    expect(tools.maxArgRepairs).toBe(2);
+    expect(tools.allowParallel).toBe(true);
+    expect(tools.maxRounds).toBeGreaterThan(0);
+    expect(tools.maxResultBytes).toBeGreaterThan(1024);
+  });
+
+  it('工具循环限制可用环境变量覆盖', () => {
+    const { tools } = loadConfig({
+      ...baseEnv,
+      TOOLS_MODE: 'prompt',
+      TOOLS_MAX_ROUNDS: '3',
+      TOOLS_MAX_CALLS_PER_ROUND: '2',
+      TOOLS_ALLOW_PARALLEL: 'false',
+    });
+    expect(tools.mode).toBe('prompt');
+    expect(tools.maxRounds).toBe(3);
+    expect(tools.maxCallsPerRound).toBe(2);
+    expect(tools.allowParallel).toBe(false);
+  });
+
+  it('参数修复次数不得超过协议上限 2', () => {
+    expect(() => loadConfig({ ...baseEnv, TOOLS_MAX_ARG_REPAIRS: '5' })).toThrow(/0-2/);
+  });
+
+  it('拒绝未知的工具模式', () => {
+    expect(() => loadConfig({ ...baseEnv, TOOLS_MODE: 'magic' })).toThrow(ConfigError);
+  });
 });
 
 describe('summarizeConfig', () => {

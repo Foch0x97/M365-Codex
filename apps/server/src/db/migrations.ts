@@ -159,10 +159,36 @@ CREATE TABLE conversation_bindings (
 );
 `;
 
+const M004_TOOL_CALLS = `
+-- 工具调用记录（对应实施计划 §5、§M5）。
+-- UNIQUE (response_id, call_id) + status 保证同一工具调用不因重连/重复提交而重复执行。
+-- side_effect 标记该工具是否可能产生副作用；副作用阶段禁止自动跨账号重放。
+CREATE TABLE tool_calls (
+  id          TEXT PRIMARY KEY,
+  response_id TEXT NOT NULL REFERENCES responses (id) ON DELETE CASCADE,
+  call_id     TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  arguments   TEXT,
+  status      TEXT NOT NULL DEFAULT 'emitted',
+  side_effect INTEGER NOT NULL DEFAULT 0,
+  output      TEXT,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  UNIQUE (response_id, call_id)
+);
+CREATE INDEX idx_tool_calls_call_id ON tool_calls (call_id);
+
+-- 代理循环的计数沿对话链累加（对应实施计划 §7.4 的「最大工具轮次 / 最大累计工具调用数」）。
+-- 放在 response 行上是为了 O(1) 拿到上一轮的计数，不必回溯整条 previous_response_id 链。
+ALTER TABLE responses ADD COLUMN tool_round INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE responses ADD COLUMN tool_calls_total INTEGER NOT NULL DEFAULT 0;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'core_settings_apikeys_admin_audit', sql: M001_CORE },
   { version: 2, name: 'accounts_tokens_health_oauth_sessions', sql: M002_ACCOUNTS },
   { version: 3, name: 'responses_conversation_bindings', sql: M003_RESPONSES },
+  { version: 4, name: 'tool_calls', sql: M004_TOOL_CALLS },
 ];
 
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(

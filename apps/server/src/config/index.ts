@@ -103,6 +103,35 @@ export const DEFAULT_UPSTREAM_WS_BASE = 'wss://substrate.office.com';
 export const DEFAULT_UPSTREAM_PATH_TEMPLATE = '/m365Copilot/Chathub/{oid}@{tid}';
 export const DEFAULT_UPSTREAM_PROTOCOL_VERSION = 'sydney-json-v1';
 
+/**
+ * 工具调用与代理循环的全局上限（对应实施计划 §7.4）。
+ *
+ * 这些是**全局天花板**，API Key 级限制只能更严、不能突破（§10，M7 落地）。
+ * `mode` 决定怎么把工具目录交给上游：
+ *   native —— 只在 invocation 里带结构化工具声明（上游原生支持时）；
+ *   prompt —— 只用提示词约束输出 `<tool_call>` JSON（上游不支持原生工具时）；
+ *   auto   —— 两者都上，并同时解析两种回应形态。M0 探针出结论前的默认值。
+ */
+export type ToolsMode = 'native' | 'prompt' | 'auto';
+
+export interface ToolsConfig {
+  readonly mode: ToolsMode;
+  /** 单轮最多接受多少个工具调用 */
+  readonly maxCallsPerRound: number;
+  /** 一条对话链上最多几轮工具调用 */
+  readonly maxRounds: number;
+  /** 一条对话链上累计最多多少个工具调用 */
+  readonly maxTotalCalls: number;
+  /** 单个工具结果的最大字节数 */
+  readonly maxResultBytes: number;
+  /** 参数不合法时向上游请求修复的最多次数（§7.3 上限为 2） */
+  readonly maxArgRepairs: number;
+  /** 是否允许一轮里出现多个工具调用 */
+  readonly allowParallel: boolean;
+}
+
+export const MAX_ARG_REPAIRS_CEILING = 2;
+
 export interface AppConfig {
   readonly port: number;
   readonly dataDir: string;
@@ -120,6 +149,7 @@ export interface AppConfig {
   readonly noProxy: string | null;
   readonly oauth: OAuthConfig;
   readonly upstream: UpstreamConfig;
+  readonly tools: ToolsConfig;
 }
 
 const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
@@ -227,6 +257,19 @@ const envSchema = z.object({
     .refine((value) => Number.isInteger(value) && value >= 0 && value <= 10, {
       message: '必须是 0-10 的整数',
     }),
+  TOOLS_MODE: z.enum(['native', 'prompt', 'auto']).optional(),
+  TOOLS_MAX_CALLS_PER_ROUND: positiveIntFromEnv(8, 1),
+  TOOLS_MAX_ROUNDS: positiveIntFromEnv(16, 1),
+  TOOLS_MAX_TOTAL_CALLS: positiveIntFromEnv(64, 1),
+  TOOLS_MAX_RESULT_BYTES: positiveIntFromEnv(256 * 1024, 1024),
+  TOOLS_MAX_ARG_REPAIRS: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined || value.trim() === '' ? MAX_ARG_REPAIRS_CEILING : Number(value)))
+    .refine((value) => Number.isInteger(value) && value >= 0 && value <= MAX_ARG_REPAIRS_CEILING, {
+      message: `必须是 0-${MAX_ARG_REPAIRS_CEILING} 的整数`,
+    }),
+  TOOLS_ALLOW_PARALLEL: booleanFromEnv,
 });
 
 /** 生成一个「可选正整数、带默认值与下限」的 env 解析器。 */
@@ -324,6 +367,15 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
       idleTimeoutMs: data.UPSTREAM_IDLE_TIMEOUT_MS,
       maxReconnects: data.UPSTREAM_MAX_RECONNECTS,
     }),
+    tools: Object.freeze({
+      mode: data.TOOLS_MODE ?? 'auto',
+      maxCallsPerRound: data.TOOLS_MAX_CALLS_PER_ROUND,
+      maxRounds: data.TOOLS_MAX_ROUNDS,
+      maxTotalCalls: data.TOOLS_MAX_TOTAL_CALLS,
+      maxResultBytes: data.TOOLS_MAX_RESULT_BYTES,
+      maxArgRepairs: data.TOOLS_MAX_ARG_REPAIRS,
+      allowParallel: data.TOOLS_ALLOW_PARALLEL ?? true,
+    }),
   });
 }
 
@@ -346,5 +398,8 @@ export function summarizeConfig(config: AppConfig): Record<string, unknown> {
     oauthScopeCount: config.oauth.scopes.length,
     upstreamWsBase: config.upstream.wsBase,
     upstreamProtocolVersion: config.upstream.protocolVersion,
+    toolsMode: config.tools.mode,
+    toolsMaxRounds: config.tools.maxRounds,
+    toolsMaxCallsPerRound: config.tools.maxCallsPerRound,
   };
 }

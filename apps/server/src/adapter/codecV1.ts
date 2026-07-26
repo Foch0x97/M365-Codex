@@ -24,6 +24,18 @@ interface SydneyArgument {
   [key: string]: unknown;
 }
 
+interface SydneyToolCall {
+  callId?: string;
+  id?: string;
+  name?: string;
+  /** 已完整的参数（JSON 字符串或对象） */
+  arguments?: string | Record<string, unknown>;
+  /** 参数增量（流式） */
+  argumentsDelta?: string;
+  /** 阶段：begin / delta / end */
+  phase?: 'begin' | 'delta' | 'end';
+}
+
 interface SydneyMessage {
   text?: string;
   author?: string;
@@ -33,6 +45,8 @@ interface SydneyMessage {
   spokenText?: string;
   adaptiveCards?: unknown[];
   sourceAttributions?: { seeMoreUrl?: string; providerDisplayName?: string }[];
+  /** 工具调用（M5，建模字段，待 M0 校准真实形态） */
+  toolCalls?: SydneyToolCall[];
   [key: string]: unknown;
 }
 
@@ -64,6 +78,10 @@ export class SydneyCodecV1 implements ProtocolCodec {
       requestId: input.invocationId,
       messages: [{ author: 'user', text: input.text, messageType: 'Chat' }],
       ...(input.conversationRef === undefined ? {} : { conversationId: input.conversationRef }),
+      ...(input.tools === undefined || input.tools.length === 0 ? {} : { tools: input.tools }),
+      ...(input.toolResults === undefined || input.toolResults.length === 0
+        ? {}
+        : { toolResults: input.toolResults }),
       ...(input.passthrough ?? {}),
     };
     return frame({
@@ -123,6 +141,9 @@ export class SydneyCodecV1 implements ProtocolCodec {
             });
           }
         }
+        for (const call of msg.toolCalls ?? []) {
+          events.push(...mapToolCall(call));
+        }
       }
 
       // 部分上游把致命错误放在 arg.result 里
@@ -143,6 +164,41 @@ export class SydneyCodecV1 implements ProtocolCodec {
     }
     return events;
   }
+}
+
+/**
+ * 把上游工具调用消息映射为归一化事件。
+ * 支持两种上游形态：一次性给出完整参数，或分 begin/delta/end 流式。
+ */
+function mapToolCall(call: SydneyToolCall): UpstreamEvent[] {
+  const callId = call.callId ?? call.id;
+  if (callId === undefined || callId === '') return [];
+
+  // 流式：按 phase 分发
+  if (call.phase === 'begin') {
+    return [{ kind: 'tool_call_begin', callId, name: call.name ?? '' }];
+  }
+  if (call.phase === 'delta') {
+    return call.argumentsDelta === undefined
+      ? []
+      : [{ kind: 'tool_call_args_delta', callId, delta: call.argumentsDelta }];
+  }
+  if (call.phase === 'end') {
+    return [{ kind: 'tool_call_end', callId }];
+  }
+
+  // 一次性完整形态：拆成 begin + 一段 args_delta + end
+  const argsString =
+    typeof call.arguments === 'string'
+      ? call.arguments
+      : call.arguments === undefined
+        ? '{}'
+        : JSON.stringify(call.arguments);
+  return [
+    { kind: 'tool_call_begin', callId, name: call.name ?? '' },
+    { kind: 'tool_call_args_delta', callId, delta: argsString },
+    { kind: 'tool_call_end', callId },
+  ];
 }
 
 /** 按协议版本选择 codec。M0 校准出真实协议后在此追加新版本。 */

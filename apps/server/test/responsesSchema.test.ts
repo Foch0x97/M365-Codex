@@ -100,12 +100,26 @@ describe('extractInputText', () => {
     expect(() => extractInputText(req)).toThrow(/M6/);
   });
 
-  it('function_call_output 返回 unsupported_feature（M5）', () => {
+  it('提取 function_call_output 为工具结果（M5）', () => {
     const req = parseResponsesRequest({
       model: 'm',
       input: [{ type: 'function_call_output', call_id: 'c1', output: '结果' }],
     });
-    expect(() => extractInputText(req)).toThrow(/M5/);
+    const extracted = extractInputText(req);
+    expect(extracted.toolResults).toEqual([{ callId: 'c1', output: '结果' }]);
+  });
+
+  it('文本与工具结果混合输入', () => {
+    const req = parseResponsesRequest({
+      model: 'm',
+      input: [
+        { role: 'user', content: '继续' },
+        { type: 'function_call_output', call_id: 'c2', output: 'ok' },
+      ],
+    });
+    const extracted = extractInputText(req);
+    expect(extracted.text).toBe('继续');
+    expect(extracted.toolResults).toEqual([{ callId: 'c2', output: 'ok' }]);
   });
 
   it('提取 instructions', () => {
