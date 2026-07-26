@@ -130,7 +130,12 @@ export class RateLimiter {
   }
 }
 
-function clampToCeiling(keyLimit: number | null, globalCeiling: number): number {
+/**
+ * 有效限额永远是 `min(Key 自身设置, 全局天花板)`；Key 没设（null）时直接用
+ * 全局天花板兜底。除了 rpm/daily/concurrency，`max_tool_calls`/`max_file_bytes`
+ * （§10.1）也复用这同一条裁剪规则，导出给 `gateway/auth.ts` 用。
+ */
+export function clampToCeiling(keyLimit: number | null, globalCeiling: number): number {
   if (keyLimit === null) return globalCeiling;
   return Math.min(keyLimit, globalCeiling);
 }

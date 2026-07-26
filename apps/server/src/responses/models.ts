@@ -31,11 +31,25 @@ function defaultModelsPath(): string {
   return fileURLToPath(new URL('../../../../config/models.json', import.meta.url));
 }
 
-export function loadModels(path = process.env.MODELS_FILE ?? defaultModelsPath()): ModelList {
+/**
+ * 读取模型目录。
+ *
+ * 读不到时会退到只含一个模型的 FALLBACK，但**必须让调用方知道**——
+ * 静默降级会让 `/v1/models` 少列模型而没人察觉（实测踩过：镜像漏拷 config/
+ * 目录，线上只返回 1 个模型，而配置文件里有 3 个，排查了很久才发现）。
+ * 传 `onFallback` 即可把原因接到日志上。
+ */
+export function loadModels(
+  path = process.env.MODELS_FILE ?? defaultModelsPath(),
+  onFallback?: (reason: string) => void,
+): ModelList {
   try {
     const raw = readFileSync(path, 'utf8');
     const parsed = JSON.parse(raw) as { data?: unknown };
-    if (!Array.isArray(parsed.data)) return FALLBACK;
+    if (!Array.isArray(parsed.data)) {
+      onFallback?.(`模型目录 ${path} 里没有 data 数组，已退回内置目录`);
+      return FALLBACK;
+    }
     const data = parsed.data
       .filter((entry): entry is ModelEntry => typeof entry === 'object' && entry !== null && 'id' in entry)
       .map((entry) => ({
@@ -45,7 +59,8 @@ export function loadModels(path = process.env.MODELS_FILE ?? defaultModelsPath()
         ...(entry.created === undefined ? {} : { created: entry.created }),
       }));
     return { object: 'list', data };
-  } catch {
+  } catch (error) {
+    onFallback?.(`读取模型目录 ${path} 失败（${(error as Error).message}），已退回内置目录`);
     return FALLBACK;
   }
 }

@@ -346,6 +346,23 @@ DROP TABLE _tool_calls_backup_v8;
 DROP TABLE _conversation_bindings_backup_v8;
 `;
 
+const M009_API_KEYS_EXTRA_FIELDS = `
+-- API Key 补齐计划 §10.1 列出、此前一直没做的四项（对应本次改动）：
+-- 备注（note，纯展示用）、累计请求次数（request_count，管理界面用量展示）、
+-- 按 Key 收紧的工具调用次数上限（max_tool_calls）与单文件/单个上传分片大小
+-- 上限（max_file_bytes）。后两者都是"只能更严、不能突破全局天花板"的语义
+-- （与既有 rpm_limit/daily_limit/max_concurrency 一致），生效逻辑分别接进
+-- responses/service.ts 的工具轮次计数与 files/service.ts 的大小校验，
+-- 取 min(Key 自身设置, 全局配置)。
+--
+-- request_count 的更新时机和 last_used_at 一起做（repo/apiKeys.ts 的
+-- touch()），不在鉴权热路径上单独多一次写。
+ALTER TABLE api_keys ADD COLUMN note TEXT;
+ALTER TABLE api_keys ADD COLUMN request_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE api_keys ADD COLUMN max_tool_calls INTEGER;
+ALTER TABLE api_keys ADD COLUMN max_file_bytes INTEGER;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'core_settings_apikeys_admin_audit', sql: M001_CORE },
   { version: 2, name: 'accounts_tokens_health_oauth_sessions', sql: M002_ACCOUNTS },
@@ -355,6 +372,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 6, name: 'idempotency_keys', sql: M006_IDEMPOTENCY },
   { version: 7, name: 'proxy_nodes', sql: M007_PROXY_NODES },
   { version: 8, name: 'responses_drop_idempotency_unique', sql: M008_RESPONSES_DROP_IDEMPOTENCY_UNIQUE },
+  { version: 9, name: 'api_keys_note_usage_tool_file_limits', sql: M009_API_KEYS_EXTRA_FIELDS },
 ];
 
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(

@@ -3,14 +3,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ApiError } from '@m365-codex/shared';
 import { loadConfig, type AppConfig } from '../src/config/index.js';
 import { openDatabase, runMigrations, type Database } from '../src/db/index.js';
+import { PrivacyModeHolder } from '../src/observability/privacyMode.js';
+import { AuditLogRepository } from '../src/repo/auditLogs.js';
 import { SettingsRepository } from '../src/repo/settings.js';
 import { buildEnvOverridesFromSettings, SettingsService } from '../src/settings/service.js';
 import { testEnv } from './helpers/testApp.js';
 
 /**
  * 设置读写（契约 §2.3）：环境变量显式设置过的项 source=env、editable=false；
- * 其余项存进 settings 表，requires_restart 为真的项进 pending_restart，
- * 只有 logging.log_level 是真正热生效的项。
+ * 其余项存进 settings 表，requires_restart 为真的项进 pending_restart；
+ * `logging.log_level` 与 `logging.log_privacy_mode` 是真正热生效的两项——后者是
+ * 为了让 debug 自动过期（§15.3）能立刻收紧回 strict，而不必等到不知道什么
+ * 时候的下次重启。
  */
 
 let db: Database;
@@ -119,5 +123,92 @@ describe('buildEnvOverridesFromSettings', () => {
     // testEnv 默认设置了 LOG_LEVEL，即便 db 里有 logging.log_level 也不应出现在 overrides
     const overrides = buildEnvOverridesFromSettings(repo, config.envKeysPresent);
     expect(overrides.LOG_LEVEL).toBeUndefined();
+  });
+});
+
+describe('log_privacy_mode 热生效（§15.3）', () => {
+  it('requires_restart 为 false，且不出现在 pending_restart', () => {
+    const view = service.getGroup('logging');
+    expect(view.log_privacy_mode?.requires_restart).toBe(false);
+
+    service.patchGroup('logging', { log_privacy_mode: 'metadata' });
+    expect(service.pendingRestartEnvVars()).not.toContain('LOG_PRIVACY_MODE');
+  });
+
+  it('patch 后立刻影响 privacyMode.current，无需重启', () => {
+    const privacyMode = new PrivacyModeHolder('strict');
+    const svc = new SettingsService({ repo, config, logger: pino({ level: 'silent' }), privacyMode });
+    svc.patchGroup('logging', { log_privacy_mode: 'metadata' });
+    expect(privacyMode.current).toBe('metadata');
+  });
+
+  it('拒绝非法取值', () => {
+    expect(() => service.patchGroup('logging', { log_privacy_mode: 'verbose' })).toThrow(ApiError);
+  });
+});
+
+describe('debug 自动过期（§15.3）', () => {
+  function makeService(overrides: { privacyMode?: PrivacyModeHolder; auditLogs?: AuditLogRepository } = {}) {
+    return new SettingsService({ repo, config, logger: pino({ level: 'silent' }), ...overrides });
+  }
+
+  it('切到 debug 时按配置的 TTL 计算 debug_expires_at', () => {
+    const now = 1_000_000;
+    const svc = makeService();
+    svc.patchGroup('logging', { log_privacy_mode: 'debug' });
+    const view = svc.getGroup('logging');
+    expect(view.debug_expires_at?.editable).toBe(false);
+    expect(view.debug_expires_at?.requires_restart).toBe(false);
+    expect(typeof view.debug_expires_at?.value).toBe('number');
+
+    const expiresAt = view.debug_expires_at?.value as number;
+    expect(expiresAt).toBeGreaterThan(now); // Date.now() 在测试运行时刻，只要求大于一个早期锚点
+    expect(expiresAt - Date.now()).toBeLessThanOrEqual(config.logPrivacyDebugTtlMs + 5_000);
+  });
+
+  it('切回 strict/metadata 时清掉 debug_expires_at，不留悬空状态', () => {
+    const svc = makeService();
+    svc.patchGroup('logging', { log_privacy_mode: 'debug' });
+    expect(svc.getGroup('logging').debug_expires_at?.value).not.toBeNull();
+
+    svc.patchGroup('logging', { log_privacy_mode: 'strict' });
+    expect(svc.getGroup('logging').debug_expires_at?.value).toBeNull();
+  });
+
+  it('未到期时 enforceDebugExpiry 不做任何事', () => {
+    const svc = makeService();
+    svc.patchGroup('logging', { log_privacy_mode: 'debug' });
+    const affected = svc.enforceDebugExpiry(Date.now());
+    expect(affected).toBe(0);
+    expect(svc.getGroup('logging').log_privacy_mode?.value).toBe('debug');
+  });
+
+  it('到期后自动恢复 strict、清掉过期时间、写审计日志', () => {
+    const auditLogs = new AuditLogRepository(db);
+    const privacyMode = new PrivacyModeHolder('strict');
+    const svc = makeService({ privacyMode, auditLogs });
+
+    svc.patchGroup('logging', { log_privacy_mode: 'debug' });
+    privacyMode.set('debug'); // 模拟 patchGroup 触发的热切换已经生效
+    const expiresAt = svc.getGroup('logging').debug_expires_at?.value as number;
+
+    const affected = svc.enforceDebugExpiry(expiresAt + 1);
+    expect(affected).toBe(1);
+
+    expect(svc.getGroup('logging').log_privacy_mode?.value).toBe('strict');
+    expect(svc.getGroup('logging').debug_expires_at?.value).toBeNull();
+    expect(privacyMode.current).toBe('strict');
+
+    const logs = auditLogs.recent(10);
+    const entry = logs.find((row) => row.action === 'settings.log_privacy_mode.debug_expired');
+    expect(entry).toBeDefined();
+    expect(entry?.actor).toBe('system');
+  });
+
+  it('没有 privacyMode/auditLogs 依赖时也能安全跑完（不强制要求这两个依赖）', () => {
+    const svc = makeService();
+    svc.patchGroup('logging', { log_privacy_mode: 'debug' });
+    expect(() => svc.enforceDebugExpiry(Date.now() + config.logPrivacyDebugTtlMs + 1)).not.toThrow();
+    expect(svc.getGroup('logging').log_privacy_mode?.value).toBe('strict');
   });
 });

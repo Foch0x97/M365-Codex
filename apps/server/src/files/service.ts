@@ -26,6 +26,12 @@ export interface IngestFileParams {
   purpose: string;
   declaredMimeType: string | null;
   content: Buffer;
+  /**
+   * 按 API Key 收紧后的单文件大小上限（§10.1），由调用方用
+   * `gateway/auth.ts` 算好的 `min(Key 自身设置, 全局天花板)` 传入；
+   * 不传则只按全局配置 `files.maxFileBytes` 校验，行为与此前一致。
+   */
+  maxFileBytesOverride?: number;
 }
 
 export class FilesService {
@@ -35,13 +41,22 @@ export class FilesService {
     this.#deps = deps;
   }
 
-  /** 单文件大小检查，供路由在读取 multipart 内容后立即调用，尽早拒绝超大请求。 */
-  assertFileSize(bytes: number): void {
-    if (bytes > this.#deps.config.maxFileBytes) {
+  /**
+   * 单文件大小检查，供路由在读取 multipart 内容后立即调用，尽早拒绝超大请求。
+   * `ceilingOverride` 是按 API Key 收紧后的上限（§10.1，由
+   * `gateway/auth.ts` 用 `clampToCeiling` 算好、不可能比全局配置更松），
+   * 不传时只按全局配置 `files.maxFileBytes` 校验，行为与此前一致。
+   */
+  assertFileSize(bytes: number, ceilingOverride?: number): void {
+    const limit =
+      ceilingOverride === undefined
+        ? this.#deps.config.maxFileBytes
+        : Math.min(this.#deps.config.maxFileBytes, ceilingOverride);
+    if (bytes > limit) {
       throw new ApiError({
         type: 'invalid_request_error',
         status: 413,
-        message: `文件大小 ${bytes} 字节，超过单文件上限 ${this.#deps.config.maxFileBytes} 字节`,
+        message: `文件大小 ${bytes} 字节，超过单文件上限 ${limit} 字节`,
       });
     }
   }
@@ -61,7 +76,7 @@ export class FilesService {
 
   /** 校验、分类、提取、落盘、入库的完整流程。 */
   async ingest(params: IngestFileParams): Promise<FileRow> {
-    this.assertFileSize(params.content.length);
+    this.assertFileSize(params.content.length, params.maxFileBytesOverride);
     this.assertQuota(params.apiKeyId, params.content.length);
 
     const { kind, trusted } = classifyFile(params.filename, params.declaredMimeType, params.content);

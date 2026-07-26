@@ -274,4 +274,73 @@ describe('大小与配额限制', () => {
     });
     expect(res.statusCode).toBe(413);
   });
+
+  describe('API Key 级单文件大小上限（§10.1）', () => {
+    it('比全局更严的 max_file_bytes 会先触发 413', async () => {
+      harness = await createTestHarness({ DATA_DIR: dataDir, FILES_MAX_FILE_BYTES: '1024' });
+      const key = harness.context.apiKeys.create({ name: '受限 Key', maxFileBytes: 100 });
+      const { body, contentType } = multipartBody(
+        {},
+        { field: 'file', filename: 'mid.bin', contentType: 'application/octet-stream', content: Buffer.alloc(500, 1) },
+      );
+      const res = await harness.app.inject({
+        method: 'POST',
+        url: '/v1/files',
+        headers: { ...auth(key.key), 'content-type': contentType },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(413);
+      expect(res.body).toContain('100');
+    });
+
+    it('Key 设置的值比全局更松时被裁剪到全局上限，不允许突破', async () => {
+      harness = await createTestHarness({ DATA_DIR: dataDir, FILES_MAX_FILE_BYTES: '1024' });
+      // Key 自己设置成 10MB（远比全局 1024 字节宽松），有效上限必须仍是全局的 1024。
+      // 内容取 1025 字节：刚好在 Fastify multipart 插件自身的 fileSize 上限
+      // （全局 maxFileBytes + 1 = 1025，见 app.ts 的 multipart 注册）之内，
+      // 这样能确认是本服务自己的 assertFileSize 拒绝了它，而不是被
+      // multipart 插件更早的、独立的一道检查拦下来
+      const key = harness.context.apiKeys.create({ name: '想突破全局上限', maxFileBytes: 10 * 1024 * 1024 });
+      const { body, contentType } = multipartBody(
+        {},
+        { field: 'file', filename: 'big.bin', contentType: 'application/octet-stream', content: Buffer.alloc(1025, 1) },
+      );
+      const res = await harness.app.inject({
+        method: 'POST',
+        url: '/v1/files',
+        headers: { ...auth(key.key), 'content-type': contentType },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(413);
+      expect(res.body).toContain('1024');
+    });
+
+    it('大小在 Key 收紧后的上限之内时正常通过', async () => {
+      harness = await createTestHarness({ DATA_DIR: dataDir, FILES_MAX_FILE_BYTES: '1024' });
+      const key = harness.context.apiKeys.create({ name: '受限但够用', maxFileBytes: 200 });
+      const { body, contentType } = multipartBody(
+        {},
+        { field: 'file', filename: 'small.txt', contentType: 'text/plain', content: Buffer.from('hello') },
+      );
+      const res = await harness.app.inject({
+        method: 'POST',
+        url: '/v1/files',
+        headers: { ...auth(key.key), 'content-type': contentType },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(201);
+    });
+
+    it('/v1/uploads 创建阶段也按 Key 收紧后的上限校验', async () => {
+      harness = await createTestHarness({ DATA_DIR: dataDir, FILES_MAX_FILE_BYTES: '1024' });
+      const key = harness.context.apiKeys.create({ name: '受限 Key', maxFileBytes: 100 });
+      const res = await harness.app.inject({
+        method: 'POST',
+        url: '/v1/uploads',
+        headers: auth(key.key),
+        payload: { filename: 'a.bin', bytes: 500 },
+      });
+      expect(res.statusCode).toBe(413);
+    });
+  });
 });

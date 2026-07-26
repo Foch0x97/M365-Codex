@@ -14,7 +14,8 @@ import { serializeSse, type SseEvent } from '../responses/types.js';
 
 export function registerV1Routes(app: FastifyInstance, context: AppContext): void {
   const apiKeyGuard = createApiKeyGuard(context);
-  const models = loadModels();
+  // 读不到目录文件时会退到内置的单条目录——这属于部署问题，必须留痕
+  const models = loadModels(undefined, (reason) => context.logger.warn({ reason }, '模型目录降级'));
 
   app.get('/v1/models', { preHandler: apiKeyGuard }, async () => models);
 
@@ -44,6 +45,7 @@ export function registerV1Routes(app: FastifyInstance, context: AppContext): voi
         apiKeyId,
         signal: controller.signal,
         idempotencyKey,
+        toolCallsCeiling: request.apiKeyLimits?.maxToolCalls,
       });
       context.inFlight.register(execution.responseId, controller);
 

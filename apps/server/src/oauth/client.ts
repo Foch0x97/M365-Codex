@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { ProxyAgent, request, type Dispatcher } from 'undici';
 import type { OAuthConfig } from '../config/index.js';
+import { hostnameFromUrl, shouldBypassProxy } from '../util/noProxy.js';
 
 /**
  * 与 Microsoft identity platform 的 HTTP 交互。
@@ -57,6 +58,8 @@ export interface HttpOAuthClientOptions {
   config: OAuthConfig;
   /** 出口代理，对应 HTTPS_PROXY / HTTP_PROXY */
   proxyUrl?: string | null;
+  /** NO_PROXY 排除列表；token 端点主机命中时即使配了代理也直连 */
+  noProxy?: string | null;
   timeoutMs?: number;
 }
 
@@ -64,11 +67,13 @@ export class HttpOAuthClient implements OAuthClient {
   readonly #config: OAuthConfig;
   readonly #dispatcher: Dispatcher | undefined;
   readonly #timeoutMs: number;
+  readonly #noProxy: string | null;
 
   constructor(options: HttpOAuthClientOptions) {
     this.#config = options.config;
     this.#timeoutMs = options.timeoutMs ?? 30_000;
-    this.#dispatcher = toDispatcher(options.proxyUrl);
+    this.#noProxy = options.noProxy ?? null;
+    this.#dispatcher = resolveDispatcherForTokenUrl(this.#config.tokenUrl, options.proxyUrl, this.#noProxy);
   }
 
   buildAuthorizeUrl(params: { state: string; codeChallenge: string }): string {
@@ -111,8 +116,14 @@ export class HttpOAuthClient implements OAuthClient {
 
   async #postToken(form: Record<string, string>, proxyUrlOverride?: string | null): Promise<TokenResponse> {
     const body = new URLSearchParams(form).toString();
-    // 账号绑定了专属代理时，逐次调用临时切换 dispatcher；否则用构造时的全局默认值
-    const dispatcher = proxyUrlOverride === undefined ? this.#dispatcher : toDispatcher(proxyUrlOverride);
+    // 账号绑定了专属代理时，逐次调用临时切换 dispatcher；否则用构造时的全局默认值。
+    // token 端点主机命中 NO_PROXY 时，resolveDispatcherForTokenUrl 无论传入什么
+    // proxyUrl 都会返回 undefined——这条判断优先于账号代理覆盖，语义上「这个
+    // 主机不走代理」应当是硬约束。
+    const dispatcher =
+      proxyUrlOverride === undefined
+        ? this.#dispatcher
+        : resolveDispatcherForTokenUrl(this.#config.tokenUrl, proxyUrlOverride, this.#noProxy);
     const response = await request(this.#config.tokenUrl, {
       method: 'POST',
       headers: {
@@ -147,6 +158,21 @@ export class HttpOAuthClient implements OAuthClient {
 /** 代理 URL 为空/未设置时不建 dispatcher，走 undici 默认（直连）。 */
 function toDispatcher(proxyUrl?: string | null): Dispatcher | undefined {
   return proxyUrl == null || proxyUrl === '' ? undefined : new ProxyAgent(proxyUrl);
+}
+
+/**
+ * 按 token 端点目标主机决定要不要建代理 dispatcher：命中 NO_PROXY 时始终直连，
+ * 不管 `proxyUrl` 传的是全局默认还是账号专属代理。导出为纯函数是为了能在不
+ * 发真实网络请求的前提下单独测试这条判断逻辑。
+ */
+export function resolveDispatcherForTokenUrl(
+  tokenUrl: string,
+  proxyUrl: string | null | undefined,
+  noProxy: string | null | undefined,
+): Dispatcher | undefined {
+  const host = hostnameFromUrl(tokenUrl);
+  if (host !== null && shouldBypassProxy(host, noProxy)) return undefined;
+  return toDispatcher(proxyUrl);
 }
 
 /**

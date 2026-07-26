@@ -129,6 +129,7 @@ export function registerFileRoutes(app: FastifyInstance, context: AppContext): v
         purpose,
         declaredMimeType: file.mimetype,
         content,
+        maxFileBytesOverride: request.apiKeyLimits?.maxFileBytes,
       });
       reply.code(201);
       return toFileObject(row);
@@ -179,7 +180,7 @@ export function registerFileRoutes(app: FastifyInstance, context: AppContext): v
   app.post('/v1/uploads', { preHandler: apiKeyGuard }, async (request, reply) => {
     const apiKeyId = requireApiKeyId(request);
     const body = parseOrThrow(createUploadSchema, request.body);
-    context.files.assertFileSize(body.bytes);
+    context.files.assertFileSize(body.bytes, request.apiKeyLimits?.maxFileBytes);
 
     const now = Date.now();
     const row = context.uploadRepo.create(
@@ -207,7 +208,7 @@ export function registerFileRoutes(app: FastifyInstance, context: AppContext): v
       const body = asMultipartBody(request);
       const dataField = requireFileField(body, 'data');
       const content = await dataField.toBuffer();
-      context.files.assertFileSize(content.length);
+      context.files.assertFileSize(content.length, request.apiKeyLimits?.maxFileBytes);
 
       const part = context.uploadRepo.addPart(upload.id, content.length);
       context.fileStorage.writeUploadPart(upload.id, part.id, content);
@@ -244,6 +245,7 @@ export function registerFileRoutes(app: FastifyInstance, context: AppContext): v
         purpose: upload.purpose,
         declaredMimeType: upload.mime_type,
         content,
+        maxFileBytesOverride: request.apiKeyLimits?.maxFileBytes,
       });
       context.uploadRepo.markCompleted(upload.id, fileRow.id);
       context.fileStorage.deleteUpload(upload.id);

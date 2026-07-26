@@ -2,6 +2,7 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 import type { Logger } from 'pino';
 import { WebSocket, type ClientOptions } from 'ws';
 import type { UpstreamConfig } from '../config/index.js';
+import { hostnameFromUrl, shouldBypassProxy } from '../util/noProxy.js';
 import { AsyncQueue } from './asyncQueue.js';
 import { redactWsUrl } from './endpoint.js';
 import { classifyCloseCode, classifyHttpStatus, UpstreamError } from './errors.js';
@@ -31,6 +32,8 @@ export interface ConnectionDeps {
   logger: Logger;
   /** 出口代理 URL（HTTPS_PROXY / HTTP_PROXY），用于把上游流量绑定到指定出口 */
   proxyUrl?: string | null;
+  /** NO_PROXY 排除列表；目标主机命中时即使配置了 proxyUrl 也直连 */
+  noProxy?: string | null;
   /** 注入 WebSocket 实现，测试用；默认使用 ws 库 */
   wsFactory?: (url: string, options: ClientOptions) => WebSocket;
 }
@@ -77,7 +80,13 @@ export class SydneyConnection {
       headers: { 'X-Scenario': config.scenario },
     };
     if (this.#deps.proxyUrl != null && this.#deps.proxyUrl !== '') {
-      options.agent = new HttpsProxyAgent(this.#deps.proxyUrl);
+      const targetHost = hostnameFromUrl(input.url);
+      const bypass = targetHost !== null && shouldBypassProxy(targetHost, this.#deps.noProxy);
+      if (bypass) {
+        logger.debug({ url: redactWsUrl(input.url) }, '目标主机命中 NO_PROXY，直连不走出口代理');
+      } else {
+        options.agent = new HttpsProxyAgent(this.#deps.proxyUrl);
+      }
     }
 
     const ws = (this.#deps.wsFactory ?? defaultWsFactory)(input.url, options);

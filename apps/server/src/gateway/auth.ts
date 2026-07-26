@@ -5,12 +5,25 @@ import type { AppContext } from '../context.js';
 import { evaluateApiKeyUsability, parseList, type ApiKeyRow } from '../repo/apiKeys.js';
 import type { AdminSessionRow } from '../repo/adminSessions.js';
 import { maskIp } from '../observability/logger.js';
+import { clampToCeiling } from './rateLimit.js';
 
 /** 鉴权：对外 API Key 与管理端会话两条独立通道。 */
+
+/**
+ * API Key 级、已按全局天花板裁剪过的有效限额（§10.1）：`max_tool_calls`/
+ * `max_file_bytes` 挂在这里供后续路由直接读取，不必再查一次库或重算一次
+ * `clampToCeiling`——与 rpm/daily/concurrency（`gateway/rateLimit.ts`）走的
+ * 是同一条「只能更严、不能突破全局上限」的规则。
+ */
+export interface ApiKeyEffectiveLimits {
+  maxToolCalls: number;
+  maxFileBytes: number;
+}
 
 declare module 'fastify' {
   interface FastifyRequest {
     apiKeyRow?: ApiKeyRow;
+    apiKeyLimits?: ApiKeyEffectiveLimits;
     adminSession?: AdminSessionRow;
   }
 }
@@ -114,6 +127,13 @@ export function createApiKeyGuard(context: AppContext) {
     reply.raw.once('close', consumed.release);
 
     request.apiKeyRow = matched;
+    // §10.1：工具调用次数、单文件/上传分片大小这两项按 Key 收紧的限额，同样
+    // 遵守「不得突破全局天花板」——在这里统一裁剪好，供 responses/service.ts
+    // 与 files 路由直接读取，不必各自再查一次库
+    request.apiKeyLimits = {
+      maxToolCalls: clampToCeiling(matched.max_tool_calls, context.config.tools.maxTotalCalls),
+      maxFileBytes: clampToCeiling(matched.max_file_bytes, context.config.files.maxFileBytes),
+    };
     context.apiKeys.touch(matched.id, clientIpFor(context, request));
   };
 }
@@ -144,7 +164,7 @@ function recordRestrictionHit(
     action,
     target: apiKeyId,
     detail: { endpoint, reason },
-    clientIp: maskIp(clientIp ?? undefined, context.config.logPrivacyMode),
+    clientIp: maskIp(clientIp ?? undefined, context.privacyMode.current),
   });
 }
 

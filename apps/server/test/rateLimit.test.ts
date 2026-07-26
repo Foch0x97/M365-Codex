@@ -27,6 +27,10 @@ function makeKey(overrides: Partial<ApiKeyRow> = {}): ApiKeyRow {
     created_at: 0,
     last_used_at: null,
     last_used_ip: null,
+    note: null,
+    request_count: 0,
+    max_tool_calls: null,
+    max_file_bytes: null,
     ...overrides,
   };
 }

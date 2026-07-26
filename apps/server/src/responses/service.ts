@@ -11,6 +11,7 @@ import type { ToolCallRepository } from '../repo/toolCalls.js';
 import type { FilesService } from '../files/service.js';
 import { buildToolInstruction, PromptToolScanner } from '../tools/promptProtocol.js';
 import { ToolRegistry, type ValidationReason } from '../tools/registry.js';
+import { SHUTDOWN_ABORT_REASON } from './inFlight.js';
 import { ResponseStreamBuilder } from './builder.js';
 import {
   buildPassthrough,
@@ -43,6 +44,13 @@ export interface CreateResponseInput {
   apiKeyId: string | null;
   signal?: AbortSignal | undefined;
   idempotencyKey?: string | null;
+  /**
+   * 按 API Key 收紧后的、本对话链累计工具调用数上限（§10.1）；调用方
+   * （`routes/v1.ts`/`routes/chat.ts`）已经用 `gateway/auth.ts` 算好的
+   * `min(Key 自身设置, 全局天花板)` 传进来。不传时退回全局配置
+   * `tools.maxTotalCalls`，行为与此前完全一致。
+   */
+  toolCallsCeiling?: number;
 }
 
 export interface ResponseExecution {
@@ -198,6 +206,9 @@ export class ResponsesService {
   }): AsyncGenerator<SseEvent> {
     const { builder, registry } = ctx;
     const limits = this.#deps.tools;
+    // §10.1：API Key 级的工具调用次数上限只能比全局天花板更严；
+    // ctx.input.toolCallsCeiling 已经是调用方用 clampToCeiling 算好的有效值
+    const maxTotalCalls = ctx.input.toolCallsCeiling ?? limits.maxTotalCalls;
     const responseId = builder.responseId;
 
     yield* iter(builder.begin());
@@ -291,9 +302,9 @@ export class ResponsesService {
         }
 
         const emitted = toolCalls.filter((tc) => !verdict.rejected.has(tc.callId));
-        if (ctx.inherited.total + emitted.length > limits.maxTotalCalls) {
+        if (ctx.inherited.total + emitted.length > maxTotalCalls) {
           throw ApiError.badRequest(
-            `本对话链累计工具调用数将超过上限 ${limits.maxTotalCalls}，不再继续代理循环`,
+            `本对话链累计工具调用数将超过上限 ${maxTotalCalls}，不再继续代理循环`,
           );
         }
         if (verdict.soft.length > 0) {
@@ -333,6 +344,7 @@ export class ResponsesService {
       }
 
       if (ctx.input.signal?.aborted === true) {
+        if (this.#isShutdownAbort(ctx.input.signal)) return; // 落库交给 server.ts 统一处理，见该 signal 的注释
         yield* iter(builder.cancel());
         this.#persistFinal(responseId, lastAccountId, lastConversationRef, builder);
         return;
@@ -355,6 +367,7 @@ export class ResponsesService {
       this.#persistFinal(responseId, lastAccountId, lastConversationRef, builder);
     } catch (error) {
       if (ctx.input.signal?.aborted === true) {
+        if (this.#isShutdownAbort(ctx.input.signal)) return; // 同上：不重复落库
         yield* iter(builder.cancel());
         this.#persistFinal(responseId, lastAccountId, lastConversationRef, builder);
         return;
@@ -498,6 +511,16 @@ export class ResponsesService {
     this.#deps.responses.complete(responseId, snapshot.status, snapshot, {
       errorMessage: snapshot.error?.message ?? null,
     });
+  }
+
+  /**
+   * 区分「优雅关闭触发的中止」与「用户/客户端主动取消」（§19）。前者由
+   * `server.ts` 的 `gracefulShutdown` 统一按 `maintenance/recovery.ts` 的
+   * 处置把该 Response 落库为 `incomplete`；这里如果也走 `builder.cancel()`
+   * 写一次 `cancelled`，就会出现两个写手竞争同一行、两套不一致的终态语义。
+   */
+  #isShutdownAbort(signal: AbortSignal): boolean {
+    return signal.reason === SHUTDOWN_ABORT_REASON;
   }
 
   #resolveSticky(previousResponseId: string | null): { accountId: string; conversationRef: string | null } | null {

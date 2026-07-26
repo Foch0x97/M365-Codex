@@ -201,6 +201,67 @@ describe('GET/PATCH /admin/settings', () => {
   });
 });
 
+describe('debug 日志隐私模式自动过期（§15.3）', () => {
+  it('切到 debug 后 /admin/settings 能读到 debug_expires_at，调度器注册了到期检查任务', async () => {
+    const { harness: h, token } = await setup();
+    const patch = await h.app.inject({
+      method: 'PATCH',
+      url: '/admin/settings',
+      headers: auth(token),
+      payload: { group: 'logging', values: { log_privacy_mode: 'debug' } },
+    });
+    expect(patch.statusCode).toBe(200);
+    expect(patch.json().logging.log_privacy_mode).toMatchObject({ value: 'debug', requires_restart: false });
+    const expiresAt = patch.json().logging.debug_expires_at.value as number;
+    expect(expiresAt).toBeGreaterThan(Date.now());
+
+    const overview = await h.app.inject({ method: 'GET', url: '/admin/settings', headers: auth(token) });
+    expect(overview.json().logging.debug_expires_at.value).toBe(expiresAt);
+
+    expect(h.context.scheduler.statuses().some((s) => s.name === 'log_privacy_debug_expiry')).toBe(true);
+  });
+
+  it('过期后自动恢复 strict，热生效到 privacyMode，并写审计日志', async () => {
+    const { harness: h, token } = await setup();
+    await h.app.inject({
+      method: 'PATCH',
+      url: '/admin/settings',
+      headers: auth(token),
+      payload: { group: 'logging', values: { log_privacy_mode: 'debug' } },
+    });
+    expect(h.context.privacyMode.current).toBe('debug');
+
+    const expiresAt = h.context.settings.getGroup('logging').debug_expires_at?.value as number;
+    const affected = h.context.settings.enforceDebugExpiry(expiresAt + 1);
+    expect(affected).toBe(1);
+    expect(h.context.privacyMode.current).toBe('strict');
+    expect(h.context.settings.getGroup('logging').log_privacy_mode?.value).toBe('strict');
+    expect(h.context.settings.getGroup('logging').debug_expires_at?.value).toBeNull();
+
+    const logs = await h.app.inject({ method: 'GET', url: '/admin/audit-logs', headers: auth(token) });
+    const actions = (logs.json() as { data: { action: string; actor: string }[] }).data;
+    const entry = actions.find((a) => a.action === 'settings.log_privacy_mode.debug_expired');
+    expect(entry?.actor).toBe('system');
+  });
+
+  it('切回 strict 时清掉 debug_expires_at', async () => {
+    const { harness: h, token } = await setup();
+    await h.app.inject({
+      method: 'PATCH',
+      url: '/admin/settings',
+      headers: auth(token),
+      payload: { group: 'logging', values: { log_privacy_mode: 'debug' } },
+    });
+    const back = await h.app.inject({
+      method: 'PATCH',
+      url: '/admin/settings',
+      headers: auth(token),
+      payload: { group: 'logging', values: { log_privacy_mode: 'strict' } },
+    });
+    expect(back.json().logging.debug_expires_at.value).toBeNull();
+  });
+});
+
 describe('出口代理池', () => {
   it('创建后列表里的 url 打码，不出现明文用户名密码', async () => {
     const { harness: h, token } = await setup();

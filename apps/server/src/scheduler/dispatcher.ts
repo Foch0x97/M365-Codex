@@ -68,6 +68,8 @@ export interface DispatcherDeps {
   tokens: TokenManager;
   logger: Logger;
   proxyUrl?: string | null;
+  /** NO_PROXY 排除列表，透传给连接层；命中的目标主机即使配了代理也直连 */
+  noProxy?: string | null;
   /**
    * 按账号解析出口代理（对应实施计划 §13.1「账号绑定代理后保持出口粘性」）。
    * 返回 null 表示该账号未绑定代理或绑定的节点已停用，回退到 `proxyUrl` 全局默认值。
@@ -180,6 +182,7 @@ export class UpstreamDispatcher {
           codec: this.#deps.codec,
           logger,
           proxyUrl,
+          noProxy: this.#deps.noProxy ?? null,
         });
 
         const invocationId = randomUUID();

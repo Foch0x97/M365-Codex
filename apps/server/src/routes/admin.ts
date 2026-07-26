@@ -15,6 +15,8 @@ const loginSchema = z.object({
 const timestamp = z.number().int().nonnegative().nullable().optional();
 const positiveInt = z.number().int().positive().nullable().optional();
 const stringList = z.array(z.string().min(1)).nullable().optional();
+// 备注纯展示用，给个宽松上限防止管理界面被灌入超长文本
+const note = z.string().max(500, '备注过长').nullable().optional();
 
 const createKeySchema = z.object({
   name: z.string().min(1, '名称不能为空').max(100, '名称过长'),
@@ -25,6 +27,12 @@ const createKeySchema = z.object({
   max_concurrency: positiveInt,
   allowed_endpoints: stringList,
   allowed_models: stringList,
+  note,
+  // §10.1：按 Key 收紧的工具调用次数上限 / 单文件大小上限；不得突破全局天花板
+  // 这条铁律不在这里校验（写时允许任意正数），生效时由 gateway/auth.ts 用
+  // clampToCeiling 统一裁剪，与既有 rpm_limit/daily_limit 的做法保持一致
+  max_tool_calls: positiveInt,
+  max_file_bytes: positiveInt,
 });
 
 const updateKeySchema = z
@@ -38,6 +46,9 @@ const updateKeySchema = z
     max_concurrency: positiveInt,
     allowed_endpoints: stringList,
     allowed_models: stringList,
+    note,
+    max_tool_calls: positiveInt,
+    max_file_bytes: positiveInt,
   })
   .refine((value) => Object.keys(value).length > 0, { message: '至少需要提供一个待更新字段' });
 
@@ -71,17 +82,17 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
       context.auditLogs.record({
         actor: 'admin',
         action: 'admin.login.failed',
-        clientIp: maskIp(ip ?? undefined, context.config.logPrivacyMode),
+        clientIp: maskIp(ip ?? undefined, context.privacyMode.current),
       });
       throw ApiError.unauthorized('管理端密码错误');
     }
 
     throttle.reset(throttleKey);
-    const session = context.adminSessions.issue(maskIp(ip ?? undefined, context.config.logPrivacyMode));
+    const session = context.adminSessions.issue(maskIp(ip ?? undefined, context.privacyMode.current));
     context.auditLogs.record({
       actor: 'admin',
       action: 'admin.login.success',
-      clientIp: maskIp(ip ?? undefined, context.config.logPrivacyMode),
+      clientIp: maskIp(ip ?? undefined, context.privacyMode.current),
     });
     reply.code(200);
     return { token: session.token, expires_at: session.expiresAt };
@@ -123,6 +134,9 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
       maxConcurrency: body.max_concurrency ?? null,
       allowedEndpoints: body.allowed_endpoints ?? null,
       allowedModels: body.allowed_models ?? null,
+      note: body.note ?? null,
+      maxToolCalls: body.max_tool_calls ?? null,
+      maxFileBytes: body.max_file_bytes ?? null,
     });
 
     context.auditLogs.record({
@@ -154,6 +168,9 @@ export function registerAdminRoutes(app: FastifyInstance, context: AppContext): 
         ...(body.max_concurrency === undefined ? {} : { maxConcurrency: body.max_concurrency }),
         ...(body.allowed_endpoints === undefined ? {} : { allowedEndpoints: body.allowed_endpoints }),
         ...(body.allowed_models === undefined ? {} : { allowedModels: body.allowed_models }),
+        ...(body.note === undefined ? {} : { note: body.note }),
+        ...(body.max_tool_calls === undefined ? {} : { maxToolCalls: body.max_tool_calls }),
+        ...(body.max_file_bytes === undefined ? {} : { maxFileBytes: body.max_file_bytes }),
       });
       if (updated === undefined) {
         throw ApiError.notFound('API Key 不存在');

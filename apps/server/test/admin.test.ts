@@ -194,6 +194,109 @@ describe('API Key 管理', () => {
     });
     expect(response.statusCode).toBe(404);
   });
+
+  describe('§10.1 补充字段：备注 / 累计请求次数 / 工具调用与上传大小限制', () => {
+    it('创建时可以写入备注与限制，列表/创建响应都能读到', async () => {
+      const { harness: h, token } = await setup();
+      const created = await h.app.inject({
+        method: 'POST',
+        url: '/admin/api-keys',
+        headers: auth(token),
+        payload: { name: '带备注', note: '给某某项目用', max_tool_calls: 5, max_file_bytes: 1024 },
+      });
+      expect(created.statusCode).toBe(201);
+      const body = created.json() as {
+        note: string | null;
+        request_count: number;
+        max_tool_calls: number | null;
+        max_file_bytes: number | null;
+      };
+      expect(body.note).toBe('给某某项目用');
+      expect(body.request_count).toBe(0);
+      expect(body.max_tool_calls).toBe(5);
+      expect(body.max_file_bytes).toBe(1024);
+
+      const list = await h.app.inject({ method: 'GET', url: '/admin/api-keys', headers: auth(token) });
+      const keys = (list.json() as { data: typeof body[] }).data;
+      expect(keys[0]?.note).toBe('给某某项目用');
+      expect(keys[0]?.max_tool_calls).toBe(5);
+      expect(keys[0]?.max_file_bytes).toBe(1024);
+    });
+
+    it('不传时默认 null / 0，不强制要求这些字段', async () => {
+      const { harness: h, token } = await setup();
+      const created = await h.app.inject({
+        method: 'POST',
+        url: '/admin/api-keys',
+        headers: auth(token),
+        payload: { name: '不带备注' },
+      });
+      const body = created.json() as {
+        note: string | null;
+        request_count: number;
+        max_tool_calls: number | null;
+        max_file_bytes: number | null;
+      };
+      expect(body.note).toBeNull();
+      expect(body.request_count).toBe(0);
+      expect(body.max_tool_calls).toBeNull();
+      expect(body.max_file_bytes).toBeNull();
+    });
+
+    it('PATCH 可以更新备注与限制', async () => {
+      const { harness: h, token } = await setup();
+      const created = (
+        await h.app.inject({
+          method: 'POST',
+          url: '/admin/api-keys',
+          headers: auth(token),
+          payload: { name: '待更新' },
+        })
+      ).json() as { id: string };
+
+      const updated = await h.app.inject({
+        method: 'PATCH',
+        url: `/admin/api-keys/${created.id}`,
+        headers: auth(token),
+        payload: { note: '新备注', max_tool_calls: 3, max_file_bytes: 2048 },
+      });
+      expect(updated.statusCode).toBe(200);
+      const body = updated.json() as { note: string | null; max_tool_calls: number | null; max_file_bytes: number | null };
+      expect(body.note).toBe('新备注');
+      expect(body.max_tool_calls).toBe(3);
+      expect(body.max_file_bytes).toBe(2048);
+    });
+
+    it('备注过长时拒绝', async () => {
+      const { harness: h, token } = await setup();
+      const response = await h.app.inject({
+        method: 'POST',
+        url: '/admin/api-keys',
+        headers: auth(token),
+        payload: { name: '备注超长', note: 'x'.repeat(501) },
+      });
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('累计请求次数随实际调用增加（管理界面用量展示）', async () => {
+      const { harness: h, token } = await setup();
+      const created = (
+        await h.app.inject({
+          method: 'POST',
+          url: '/admin/api-keys',
+          headers: auth(token),
+          payload: { name: '用量统计' },
+        })
+      ).json() as { key: string; id: string };
+
+      await h.app.inject({ method: 'GET', url: '/v1/models', headers: { authorization: `Bearer ${created.key}` } });
+      await h.app.inject({ method: 'GET', url: '/v1/models', headers: { authorization: `Bearer ${created.key}` } });
+
+      const list = await h.app.inject({ method: 'GET', url: '/admin/api-keys', headers: auth(token) });
+      const keys = (list.json() as { data: { id: string; request_count: number }[] }).data;
+      expect(keys.find((k) => k.id === created.id)?.request_count).toBe(2);
+    });
+  });
 });
 
 describe('审计日志', () => {

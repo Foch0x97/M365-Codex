@@ -30,6 +30,7 @@ import { IdempotencyStore } from './gateway/idempotency.js';
 import { RateLimiter } from './gateway/rateLimit.js';
 import { MaintenanceScheduler } from './maintenance/scheduler.js';
 import { Metrics } from './observability/metrics.js';
+import { PrivacyModeHolder } from './observability/privacyMode.js';
 import { InFlightRegistry } from './responses/inFlight.js';
 import { ResponsesService } from './responses/service.js';
 import { SettingsService } from './settings/service.js';
@@ -75,6 +76,8 @@ export interface AppContext {
   /** M7：设置读写（契约 §2.3） */
   readonly settingsRepo: SettingsRepository;
   readonly settings: SettingsService;
+  /** 当前生效的日志隐私模式；log_privacy_mode 热切换（含 debug 自动过期）都改这里 */
+  readonly privacyMode: PrivacyModeHolder;
   /** M7：定时清理任务调度（§18），已注册好各清理 job，未 start（由 server.ts 决定何时启动） */
   readonly scheduler: MaintenanceScheduler;
   /** 指标注册表，接了 GET /metrics（M8，§17） */
@@ -112,6 +115,7 @@ export function createContext(options: CreateContextOptions): AppContext {
     new HttpOAuthClient({
       config: config.oauth,
       proxyUrl: config.httpsProxy ?? config.httpProxy,
+      noProxy: config.noProxy,
     });
 
   // 账号绑定了专属出口代理时（§13.1），Token 刷新与上游长连接都走这一个出口，
@@ -133,6 +137,7 @@ export function createContext(options: CreateContextOptions): AppContext {
     tokens,
     logger,
     proxyUrl: config.httpsProxy ?? config.httpProxy,
+    noProxy: config.noProxy,
     resolveProxyForAccount,
     metrics,
   });
@@ -159,6 +164,7 @@ export function createContext(options: CreateContextOptions): AppContext {
   const adminSessions = new AdminSessionRepository(db);
   const auditLogs = new AuditLogRepository(db);
   const settingsRepo = new SettingsRepository(db);
+  const privacyMode = new PrivacyModeHolder(config.logPrivacyMode);
   const idempotency = new IdempotencyStore(db);
   const backupService = new BackupService({
     db,
@@ -167,6 +173,7 @@ export function createContext(options: CreateContextOptions): AppContext {
     masterKeyVersion: config.masterKeyVersion,
   });
   const backupStore = new BackupStore(config.dataDir);
+  const settingsService = new SettingsService({ repo: settingsRepo, config, logger, privacyMode, auditLogs });
 
   const scheduler = new MaintenanceScheduler(logger);
   registerMaintenanceJobs(scheduler, {
@@ -181,6 +188,7 @@ export function createContext(options: CreateContextOptions): AppContext {
     uploadRepo,
     fileStorage,
     backupStore,
+    settings: settingsService,
   });
 
   return {
@@ -213,7 +221,8 @@ export function createContext(options: CreateContextOptions): AppContext {
     proxyNodes,
     proxyChecker: options.proxyChecker ?? defaultProxyChecker,
     settingsRepo,
-    settings: new SettingsService({ repo: settingsRepo, config, logger }),
+    settings: settingsService,
+    privacyMode,
     scheduler,
     metrics,
     backup: backupService,
@@ -240,10 +249,18 @@ function registerMaintenanceJobs(
     uploadRepo: UploadRepository;
     fileStorage: FileStorage;
     backupStore: BackupStore;
+    settings: SettingsService;
   },
 ): void {
   const interval = deps.config.cleanup.intervalMs;
 
+  scheduler.register({
+    // debug 日志隐私模式到期检查（§15.3）：复用清理任务共用的调度间隔即可，
+    // 不必为此单独加一个配置项——过期粒度精确到分钟没有实际意义
+    name: 'log_privacy_debug_expiry',
+    intervalMs: interval,
+    run: () => deps.settings.enforceDebugExpiry(),
+  });
   scheduler.register({
     name: 'oauth_sessions_cleanup',
     intervalMs: interval,

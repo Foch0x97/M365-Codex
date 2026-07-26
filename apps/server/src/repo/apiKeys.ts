@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ApiKeyCreated, ApiKeyView } from '@m365-codex/shared';
+import type { ApiKeyView } from '@m365-codex/shared';
 import { generateApiKey, maskApiKey } from '../crypto/apiKey.js';
 import { asRow, asRows, type Database } from '../db/index.js';
 
@@ -23,6 +23,33 @@ export interface ApiKeyRow {
   created_at: number;
   last_used_at: number | null;
   last_used_ip: string | null;
+  /** 备注，纯展示用，不参与任何鉴权/限额判定 */
+  note: string | null;
+  /** 累计请求次数（管理界面用量展示），随 touch() 一起递增，不在热路径上单独多一次写 */
+  request_count: number;
+  /** 按 Key 收紧的工具调用次数上限（对话链累计），null 表示不额外收紧，只受全局天花板约束 */
+  max_tool_calls: number | null;
+  /** 按 Key 收紧的单文件/单个上传分片大小上限（字节），null 表示不额外收紧 */
+  max_file_bytes: number | null;
+}
+
+/**
+ * `ApiKeyView`/`ApiKeyCreated`（`@m365-codex/shared`）还没收进这四个字段——
+ * 本次改动范围限定在 `apps/server/**`，不改共享包（避免和同时改 `apps/web`
+ * 的另一处改动冲突）。这里在 server 内部扩展一层，字段值仍原样通过 JSON
+ * 返回给管理界面；后续若要给 WebUI 提供静态类型，再把这几个字段合并进
+ * `packages/shared` 的公共契约类型。
+ */
+export interface ApiKeyViewExt extends ApiKeyView {
+  note: string | null;
+  request_count: number;
+  max_tool_calls: number | null;
+  max_file_bytes: number | null;
+}
+
+export interface ApiKeyCreatedExt extends ApiKeyViewExt {
+  /** 明文 API Key，仅创建时返回一次，服务端不保存 */
+  key: string;
 }
 
 export interface CreateApiKeyInput {
@@ -34,6 +61,9 @@ export interface CreateApiKeyInput {
   maxConcurrency?: number | null;
   allowedEndpoints?: string[] | null;
   allowedModels?: string[] | null;
+  note?: string | null;
+  maxToolCalls?: number | null;
+  maxFileBytes?: number | null;
 }
 
 export interface UpdateApiKeyInput {
@@ -46,6 +76,9 @@ export interface UpdateApiKeyInput {
   maxConcurrency?: number | null;
   allowedEndpoints?: string[] | null;
   allowedModels?: string[] | null;
+  note?: string | null;
+  maxToolCalls?: number | null;
+  maxFileBytes?: number | null;
 }
 
 /** 导出给 `gateway/rateLimit.ts` 复用，避免第二份 JSON 解析逻辑。 */
@@ -64,7 +97,7 @@ function serializeList(value: string[] | null | undefined): string | null {
   return JSON.stringify(value);
 }
 
-export function toApiKeyView(row: ApiKeyRow): ApiKeyView {
+export function toApiKeyView(row: ApiKeyRow): ApiKeyViewExt {
   return {
     id: row.id,
     name: row.name,
@@ -80,6 +113,10 @@ export function toApiKeyView(row: ApiKeyRow): ApiKeyView {
     max_concurrency: row.max_concurrency,
     allowed_endpoints: parseList(row.allowed_endpoints),
     allowed_models: parseList(row.allowed_models),
+    note: row.note,
+    request_count: row.request_count,
+    max_tool_calls: row.max_tool_calls,
+    max_file_bytes: row.max_file_bytes,
   };
 }
 
@@ -90,15 +127,16 @@ export class ApiKeyRepository {
     this.#db = db;
   }
 
-  create(input: CreateApiKeyInput, now = Date.now()): ApiKeyCreated {
+  create(input: CreateApiKeyInput, now = Date.now()): ApiKeyCreatedExt {
     const generated = generateApiKey();
     const id = randomUUID();
     this.#db
       .prepare(
         `INSERT INTO api_keys (
            id, name, prefix, salt, hash, enabled, starts_at, expires_at,
-           rpm_limit, daily_limit, max_concurrency, allowed_endpoints, allowed_models, created_at
-         ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           rpm_limit, daily_limit, max_concurrency, allowed_endpoints, allowed_models, created_at,
+           note, max_tool_calls, max_file_bytes
+         ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -114,6 +152,9 @@ export class ApiKeyRepository {
         serializeList(input.allowedEndpoints),
         serializeList(input.allowedModels),
         now,
+        input.note ?? null,
+        input.maxToolCalls ?? null,
+        input.maxFileBytes ?? null,
       );
 
     const row = this.getRowById(id);
@@ -132,14 +173,14 @@ export class ApiKeyRepository {
     return asRows<ApiKeyRow>(this.#db.prepare('SELECT * FROM api_keys WHERE prefix = ?').all(prefix));
   }
 
-  list(): ApiKeyView[] {
+  list(): ApiKeyViewExt[] {
     const rows = asRows<ApiKeyRow>(
       this.#db.prepare('SELECT * FROM api_keys ORDER BY created_at DESC').all(),
     );
     return rows.map(toApiKeyView);
   }
 
-  update(id: string, input: UpdateApiKeyInput): ApiKeyView | undefined {
+  update(id: string, input: UpdateApiKeyInput): ApiKeyViewExt | undefined {
     const existing = this.getRowById(id);
     if (existing === undefined) return undefined;
 
@@ -158,6 +199,9 @@ export class ApiKeyRepository {
           : serializeList(input.allowedEndpoints),
       allowed_models:
         input.allowedModels === undefined ? existing.allowed_models : serializeList(input.allowedModels),
+      note: input.note === undefined ? existing.note : input.note,
+      max_tool_calls: input.maxToolCalls === undefined ? existing.max_tool_calls : input.maxToolCalls,
+      max_file_bytes: input.maxFileBytes === undefined ? existing.max_file_bytes : input.maxFileBytes,
     };
 
     this.#db
@@ -165,7 +209,8 @@ export class ApiKeyRepository {
         `UPDATE api_keys SET
            name = ?, enabled = ?, starts_at = ?, expires_at = ?,
            rpm_limit = ?, daily_limit = ?, max_concurrency = ?,
-           allowed_endpoints = ?, allowed_models = ?
+           allowed_endpoints = ?, allowed_models = ?,
+           note = ?, max_tool_calls = ?, max_file_bytes = ?
          WHERE id = ?`,
       )
       .run(
@@ -178,6 +223,9 @@ export class ApiKeyRepository {
         next.max_concurrency,
         next.allowed_endpoints,
         next.allowed_models,
+        next.note,
+        next.max_tool_calls,
+        next.max_file_bytes,
         id,
       );
 
@@ -186,7 +234,7 @@ export class ApiKeyRepository {
   }
 
   /** 撤销：保留记录用于审计，但立即失效。 */
-  revoke(id: string, now = Date.now()): ApiKeyView | undefined {
+  revoke(id: string, now = Date.now()): ApiKeyViewExt | undefined {
     const existing = this.getRowById(id);
     if (existing === undefined) return undefined;
     this.#db
@@ -196,8 +244,16 @@ export class ApiKeyRepository {
     return row === undefined ? undefined : toApiKeyView(row);
   }
 
+  /**
+   * 更新最近使用时间/IP，并把累计请求次数 +1（§10.1）。跟 last_used_at
+   * 用同一条 UPDATE 语句一起写，不在鉴权热路径上为计数单独多一次落库。
+   */
   touch(id: string, ip: string | null, now = Date.now()): void {
-    this.#db.prepare('UPDATE api_keys SET last_used_at = ?, last_used_ip = ? WHERE id = ?').run(now, ip, id);
+    this.#db
+      .prepare(
+        'UPDATE api_keys SET last_used_at = ?, last_used_ip = ?, request_count = request_count + 1 WHERE id = ?',
+      )
+      .run(now, ip, id);
   }
 }
 

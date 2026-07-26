@@ -50,6 +50,7 @@ export function registerChatRoutes(app: FastifyInstance, context: AppContext): v
         apiKeyId,
         signal: controller.signal,
         idempotencyKey,
+        toolCallsCeiling: request.apiKeyLimits?.maxToolCalls,
       });
       context.inFlight.register(execution.responseId, controller);
 

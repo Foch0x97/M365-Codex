@@ -216,6 +216,13 @@ export interface AppConfig {
   readonly publicAdminUrl: string | null;
   readonly trustProxy: boolean;
   readonly logPrivacyMode: LogPrivacyMode;
+  /**
+   * `debug` 隐私模式的默认自动过期时长（毫秒，对应实施计划 §15.3）。
+   * debug 会记录更多请求信息，不能无限期停留在这一档；切到 debug 时按这个
+   * 时长自动计算 `logging.debug_expires_at`，到期由 `settings/service.ts`
+   * 的定时任务自动恢复 strict。
+   */
+  readonly logPrivacyDebugTtlMs: number;
   readonly logLevel: string;
   readonly upstreamWsBase: string | null;
   readonly httpProxy: string | null;
@@ -330,6 +337,8 @@ const envSchema = z.object({
   PUBLIC_ADMIN_URL: optionalUrl,
   TRUST_PROXY: booleanFromEnv,
   LOG_PRIVACY_MODE: z.enum(LOG_PRIVACY_MODES).optional(),
+  // 保守默认 1 小时：debug 模式记录更多请求信息，不该无限期停留
+  LOG_PRIVACY_DEBUG_TTL_MS: positiveIntFromEnv(60 * 60 * 1000, 60_000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).optional(),
   UPSTREAM_WS_BASE: optionalWsUrl,
   HTTP_PROXY: optionalTrimmed,
@@ -478,6 +487,7 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
     publicAdminUrl: data.PUBLIC_ADMIN_URL ?? null,
     trustProxy: data.TRUST_PROXY ?? false,
     logPrivacyMode: data.LOG_PRIVACY_MODE ?? 'strict',
+    logPrivacyDebugTtlMs: data.LOG_PRIVACY_DEBUG_TTL_MS,
     logLevel: data.LOG_LEVEL ?? 'info',
     upstreamWsBase: data.UPSTREAM_WS_BASE ?? null,
     httpProxy: data.HTTP_PROXY ?? null,

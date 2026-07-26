@@ -35,7 +35,12 @@ export function buildApp(context: AppContext, options: BuildAppOptions = {}): Fa
     trustProxy: context.config.trustProxy,
     genReqId: generateRequestId,
     bodyLimit: options.bodyLimit ?? 8 * 1024 * 1024,
-    // strict 隐私模式下关闭逐请求访问日志，避免 URL、查询串被落盘
+    // strict 隐私模式下关闭逐请求访问日志，避免 URL、查询串被落盘。
+    // 这个开关只能在构造 Fastify 实例时定一次，不属于 log_privacy_mode 之后
+    // 热切换（含 debug 自动过期）能覆盖到的部分——热切换改的是
+    // context.privacyMode.current，影响 maskIp 等运行时判断；这里仍按启动时
+    // 的初始配置值决定，是已知的、可接受的残余限制（不会因为切到 debug 就
+    // 反而多开出这一路日志，只是切回 strict 后它也不会重新关闭，除非重启）
     logController: new LogController({
       disableRequestLogging: context.config.logPrivacyMode === 'strict',
     }),

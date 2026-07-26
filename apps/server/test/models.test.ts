@@ -1,3 +1,4 @@
+import { writeFileSync, rmSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,5 +46,35 @@ describe('loadModels', () => {
     const path = join(tempDir, 'broken.json');
     await writeFile(path, '{ 坏的', 'utf8');
     expect(loadModels(path).data.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('降级必须留痕', () => {
+  // 静默降级踩过一次：镜像漏拷 config/ 目录，线上只返回 1 个模型而配置里有 3 个，
+  // 因为 catch 里什么都不说，排查时完全看不出来。
+  it('读不到文件时回调说明原因', () => {
+    const reasons: string[] = [];
+    const list = loadModels('/definitely/not/a/real/path/models.json', (r) => reasons.push(r));
+    expect(list.data).toHaveLength(1);
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]).toContain('读取模型目录');
+  });
+
+  it('文件里没有 data 数组时同样回调', () => {
+    const file = join(tmpdir(), `models-bad-${Date.now()}.json`);
+    writeFileSync(file, JSON.stringify({ object: 'list' }), 'utf8');
+    try {
+      const reasons: string[] = [];
+      loadModels(file, (r) => reasons.push(r));
+      expect(reasons[0]).toContain('没有 data 数组');
+    } finally {
+      rmSync(file, { force: true });
+    }
+  });
+
+  it('正常读取时不触发回调', () => {
+    const reasons: string[] = [];
+    loadModels(undefined, (r) => reasons.push(r));
+    expect(reasons).toHaveLength(0);
   });
 });

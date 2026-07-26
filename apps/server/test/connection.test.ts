@@ -180,6 +180,77 @@ describe('取消', () => {
   });
 });
 
+describe('NO_PROXY', () => {
+  it('未命中 NO_PROXY 时按 proxyUrl 挂出口代理', async () => {
+    const server = await startMockSydneyServer({ kind: 'normal', chunks: ['ok'] });
+    try {
+      const seen: ClientOptions[] = [];
+      const connection = new SydneyConnection({
+        config: makeConfig(server.url),
+        codec: new SydneyCodecV1(),
+        logger: pino({ level: 'silent' }),
+        proxyUrl: 'http://proxy.invalid:8080',
+        noProxy: 'other.invalid',
+        wsFactory: (url, options) => {
+          seen.push(options);
+          return new WebSocket(url, options);
+        },
+      });
+      // proxy.invalid 不是真实可达的代理，连接必然失败——这里只关心
+      // SydneyConnection 有没有按 proxyUrl 把 agent 挂上去，不关心后续网络结果
+      await collect(connection.run({ url: urlFor(server.url), invocationId: 'i', text: 'q' })).catch(() => undefined);
+      expect(seen[0]?.agent).toBeDefined();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('目标主机命中 NO_PROXY 时直连，不挂代理', async () => {
+    const server = await startMockSydneyServer({ kind: 'normal', chunks: ['ok'] });
+    try {
+      const targetHost = new URL(server.url.replace(/^ws/, 'http')).hostname;
+      const seen: ClientOptions[] = [];
+      const connection = new SydneyConnection({
+        config: makeConfig(server.url),
+        codec: new SydneyCodecV1(),
+        logger: pino({ level: 'silent' }),
+        proxyUrl: 'http://proxy.invalid:8080',
+        noProxy: targetHost,
+        wsFactory: (url, options) => {
+          seen.push(options);
+          return new WebSocket(url, options);
+        },
+      });
+      await collect(connection.run({ url: urlFor(server.url), invocationId: 'i', text: 'q' }));
+      expect(seen[0]?.agent).toBeUndefined();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('NO_PROXY=* 时全部直连', async () => {
+    const server = await startMockSydneyServer({ kind: 'normal', chunks: ['ok'] });
+    try {
+      const seen: ClientOptions[] = [];
+      const connection = new SydneyConnection({
+        config: makeConfig(server.url),
+        codec: new SydneyCodecV1(),
+        logger: pino({ level: 'silent' }),
+        proxyUrl: 'http://proxy.invalid:8080',
+        noProxy: '*',
+        wsFactory: (url, options) => {
+          seen.push(options);
+          return new WebSocket(url, options);
+        },
+      });
+      await collect(connection.run({ url: urlFor(server.url), invocationId: 'i', text: 'q' }));
+      expect(seen[0]?.agent).toBeUndefined();
+    } finally {
+      await server.close();
+    }
+  });
+});
+
 describe('握手请求头', () => {
   // 2026-07-27 真实账号实测：X-Scenario 是上游放行的**唯一硬条件**。
   // 不带它一律 403，且响应体为空、没有 WWW-Authenticate，看起来完全像

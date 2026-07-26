@@ -34,6 +34,7 @@ async function buildProbe(): Promise<{ harness: TestHarness; probe: FastifyInsta
   });
   probe.get('/guarded', { preHandler: createApiKeyGuard(harness.context) }, async (request) => ({
     api_key_id: request.apiKeyRow?.id,
+    limits: request.apiKeyLimits,
   }));
   await probe.ready();
 
@@ -134,13 +135,58 @@ describe('createApiKeyGuard', () => {
     expect(tooLate.body).toContain('过期');
   });
 
-  it('通过校验后记录最近使用时间', async () => {
+  it('通过校验后记录最近使用时间，并把累计请求次数 +1（§10.1）', async () => {
     const { harness: h, probe: p, key } = await buildProbe();
     await p.inject({ method: 'GET', url: '/guarded', headers: { 'x-api-key': key } });
-    const row = h.db.prepare('SELECT last_used_at FROM api_keys LIMIT 1').get() as {
+    await p.inject({ method: 'GET', url: '/guarded', headers: { 'x-api-key': key } });
+    const row = h.db.prepare('SELECT last_used_at, request_count FROM api_keys LIMIT 1').get() as {
       last_used_at: number | null;
+      request_count: number;
     };
     expect(row.last_used_at).toBeTypeOf('number');
+    expect(row.request_count).toBe(2);
+  });
+
+  it('apiKeyLimits：Key 未设置时用全局天花板兜底（§10.1）', async () => {
+    const { probe: p, key } = await buildProbe();
+    const response = await p.inject({ method: 'GET', url: '/guarded', headers: { 'x-api-key': key } });
+    const body = response.json() as { limits: { maxToolCalls: number; maxFileBytes: number } };
+    expect(body.limits.maxToolCalls).toBe(harness?.config.tools.maxTotalCalls);
+    expect(body.limits.maxFileBytes).toBe(harness?.config.files.maxFileBytes);
+  });
+
+  it('apiKeyLimits：Key 设置的值比全局更严时保留 Key 的值，更松时被裁剪', async () => {
+    harness = await createTestHarness();
+    const strictKey = harness.context.apiKeys.create({ name: '更严', maxToolCalls: 1, maxFileBytes: 100 });
+    const looseKey = harness.context.apiKeys.create({
+      name: '更松',
+      maxToolCalls: 10_000_000,
+      maxFileBytes: 10_000_000_000,
+    });
+
+    probe = Fastify({ logger: false });
+    probe.setErrorHandler<Error>((error, request, reply) => {
+      if (error instanceof ApiError) {
+        reply.code(error.status).send(error.toBody(String(request.id)));
+        return;
+      }
+      reply.code(500).send({ message: error.message });
+    });
+    probe.get('/guarded', { preHandler: createApiKeyGuard(harness.context) }, async (request) => ({
+      limits: request.apiKeyLimits,
+    }));
+    await probe.ready();
+
+    const strictRes = await probe.inject({ method: 'GET', url: '/guarded', headers: { 'x-api-key': strictKey.key } });
+    expect((strictRes.json() as { limits: { maxToolCalls: number; maxFileBytes: number } }).limits).toEqual({
+      maxToolCalls: 1,
+      maxFileBytes: 100,
+    });
+
+    const looseRes = await probe.inject({ method: 'GET', url: '/guarded', headers: { 'x-api-key': looseKey.key } });
+    const looseLimits = (looseRes.json() as { limits: { maxToolCalls: number; maxFileBytes: number } }).limits;
+    expect(looseLimits.maxToolCalls).toBe(harness.config.tools.maxTotalCalls);
+    expect(looseLimits.maxFileBytes).toBe(harness.config.files.maxFileBytes);
   });
 });
 

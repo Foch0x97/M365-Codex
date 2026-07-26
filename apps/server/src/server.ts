@@ -1,8 +1,11 @@
+import { fileURLToPath } from 'node:url';
+import type { FastifyInstance } from 'fastify';
+import type { Logger } from 'pino';
 import { buildApp } from './app.js';
 import { ConfigError, loadConfig, summarizeConfig, type AppConfig } from './config/index.js';
-import { createContext } from './context.js';
+import { createContext, type AppContext } from './context.js';
 import { openDatabase, resolveDatabasePath, runMigrations, type Database } from './db/index.js';
-import { recoverOnStartup } from './maintenance/recovery.js';
+import { markInProgressAsIncomplete, recoverOnStartup, SHUTDOWN_INCOMPLETE_REASON } from './maintenance/recovery.js';
 import { createLogger } from './observability/logger.js';
 import { evaluateReadiness } from './routes/health.js';
 import { SettingsRepository } from './repo/settings.js';
@@ -36,6 +39,56 @@ function reloadConfigWithSettings(db: Database, initialConfig: AppConfig): AppCo
   const overrides = buildEnvOverridesFromSettings(new SettingsRepository(db), initialConfig.envKeysPresent);
   if (Object.keys(overrides).length === 0) return initialConfig;
   return loadConfigOrExit({ ...process.env, ...overrides });
+}
+
+export interface ShutdownDeps {
+  context: AppContext;
+  app: FastifyInstance;
+  db: Database;
+  logger: Logger;
+}
+
+/**
+ * 优雅关闭（对应实施计划 §19）。
+ *
+ * 此前这里只是「停调度器 → app.close() → db.close()」：没有主动处理在途
+ * 请求——`InFlightRegistry` 里的上游连接不会被中止，仍处于 `in_progress`
+ * 的 Response 只能指望**下次启动**时 `recovery.ts` 的兜底；一旦排空超时被
+ * SIGKILL，这次兜底永远不会发生，数据库里会留下永久卡死的 in_progress 行。
+ *
+ * 处置顺序：
+ * 1. 停止定时任务调度；
+ * 2. 中止全部在途请求的 `AbortController`——促使上游 WebSocket / dispatch
+ *    循环尽快收尾。`responses/service.ts` 会识别出这是关闭触发的中止
+ *    （`SHUTDOWN_ABORT_REASON`），自己不再落库，把写状态的职责完全交给这里，
+ *    避免两处并发写同一行、产生竞争或两套不一致的终态语义；
+ * 3. 把仍处于 `in_progress` 的 Response 落库为 `incomplete`——处置逻辑
+ *    直接复用 `maintenance/recovery.ts` 给重启恢复用的同一个函数，只是
+ *    `reason` 换成 `SHUTDOWN_INCOMPLETE_REASON`，不是另一套语义；
+ * 4. 等 Fastify 排空/关闭 HTTP 连接；
+ * 5. 关闭数据库。
+ *
+ * 绝不自动重放任何有副作用的操作：已发出的工具调用原样保留、仍可查询，
+ * 这里不做任何补偿性动作。
+ */
+export async function gracefulShutdown(deps: ShutdownDeps, signal: string): Promise<void> {
+  const { context, app, db, logger } = deps;
+  logger.info({ signal }, '收到退出信号，开始优雅关闭');
+
+  context.scheduler.stop();
+
+  const abortedIds = context.inFlight.cancelAll();
+  const markedIncomplete = markInProgressAsIncomplete(context.responseRepo, SHUTDOWN_INCOMPLETE_REASON);
+  if (abortedIds.length > 0 || markedIncomplete.length > 0) {
+    logger.info(
+      { aborted: abortedIds.length, marked_incomplete: markedIncomplete.length },
+      '已中止在途请求的上游连接，并将仍处于 in_progress 的记录落库为 incomplete',
+    );
+  }
+
+  await app.close();
+  db.close();
+  logger.info('已完成优雅关闭');
 }
 
 async function main(): Promise<void> {
@@ -81,15 +134,8 @@ async function main(): Promise<void> {
   const shutdown = (signal: string): void => {
     if (shuttingDown) return;
     shuttingDown = true;
-    logger.info({ signal }, '收到退出信号，开始优雅关闭');
-    context.scheduler.stop();
-    void app
-      .close()
-      .then(() => {
-        db.close();
-        logger.info('已完成优雅关闭');
-        process.exit(0);
-      })
+    void gracefulShutdown({ context, app, db, logger }, signal)
+      .then(() => process.exit(0))
       .catch((error: unknown) => {
         logger.error({ err: error }, '优雅关闭失败');
         process.exit(1);
@@ -103,7 +149,16 @@ async function main(): Promise<void> {
   logger.info({ port: config.port }, 'M365-Codex 已就绪');
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(`[M365-Codex] 启动异常：${String(error)}\n`);
-  process.exit(1);
-});
+/**
+ * 只有直接执行本文件（`node dist/server.js` / `tsx src/server.ts`）才跑
+ * `main()`；被测试用例 `import` 只为了拿 `gracefulShutdown` 之类的导出时，
+ * 不能顺带把整个进程入口跑起来——否则测试环境缺的 `.env` 配置会导致
+ * `main()` 里的 `loadConfigOrExit` 直接 `process.exit`，把测试进程带走。
+ */
+const isMainModule = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
+if (isMainModule) {
+  main().catch((error: unknown) => {
+    process.stderr.write(`[M365-Codex] 启动异常：${String(error)}\n`);
+    process.exit(1);
+  });
+}

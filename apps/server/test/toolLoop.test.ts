@@ -471,3 +471,81 @@ describe('function_call_output 回传续接', () => {
     expect(row.output).toBe('第一次结果');
   });
 });
+
+describe('API Key 级工具调用上限（§10.1）', () => {
+  it('比全局天花板更严的 max_tool_calls 会先触发拒绝', async () => {
+    server = await startMockSydneyServer({
+      kind: 'tool-call',
+      callId: 'call_1',
+      name: 'get_weather',
+      arguments: '{"city":"北京"}',
+    });
+    harness = await createTestHarness({ UPSTREAM_WS_BASE: server.url });
+    harness.context.accounts.upsert({
+      tid: 't',
+      oid: 'o',
+      email: 'u@office.example.invalid',
+      displayName: 'u',
+      source: 'oauth',
+      tokens: { accessToken: 'a', refreshToken: 'r', expiresAt: Date.now() + 3600_000 },
+    });
+    // 全局 TOOLS_MAX_TOTAL_CALLS 默认很宽松，这里让该 Key 收紧到 0：
+    // 任何一次工具调用（1）都会超过这个上限
+    const key = harness.context.apiKeys.create({ name: '受限 Key', maxToolCalls: 0 });
+
+    const res = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: auth(key.key),
+      payload: { model: 'm', input: '北京天气', tools: [weatherTool] },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toContain('累计工具调用数将超过上限 0');
+  });
+
+  it('Key 设置的值比全局更松时被裁剪到全局上限，不允许突破', async () => {
+    server = await startMockSydneyServer({
+      kind: 'tool-call',
+      callId: 'call_1',
+      name: 'get_weather',
+      arguments: '{"city":"北京"}',
+    });
+    harness = await createTestHarness({ UPSTREAM_WS_BASE: server.url, TOOLS_MAX_TOTAL_CALLS: '1' });
+    harness.context.accounts.upsert({
+      tid: 't',
+      oid: 'o',
+      email: 'u@office.example.invalid',
+      displayName: 'u',
+      source: 'oauth',
+      tokens: { accessToken: 'a', refreshToken: 'r', expiresAt: Date.now() + 3600_000 },
+    });
+    // Key 自己设置成 10（比全局上限 1 更松），但有效上限必须仍是全局的 1，
+    // 不允许 Key 自行突破——这里第一次工具调用就恰好等于 1，能正常通过
+    const key = harness.context.apiKeys.create({ name: '想突破全局上限', maxToolCalls: 10 });
+
+    const res = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: auth(key.key),
+      payload: { model: 'm', input: '北京天气', tools: [weatherTool] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { status: string }).status).toBe('completed');
+  });
+
+  it('未设置 max_tool_calls 时按全局 TOOLS_MAX_TOTAL_CALLS 生效，行为不变', async () => {
+    const { h, apiKey } = await setupWith({
+      kind: 'tool-call',
+      callId: 'call_1',
+      name: 'get_weather',
+      arguments: '{"city":"北京"}',
+    });
+    const res = await h.app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: auth(apiKey),
+      payload: { model: 'm', input: '北京天气', tools: [weatherTool] },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+});

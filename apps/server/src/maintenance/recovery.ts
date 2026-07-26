@@ -29,15 +29,28 @@ export interface RecoveryResult {
   inProgressMarkedIncomplete: number;
 }
 
-const RESTART_INCOMPLETE_REASON = 'server_restarted';
+export const RESTART_INCOMPLETE_REASON = 'server_restarted';
+/**
+ * 优雅关闭（§19）用的 incomplete 原因，与重启恢复区分开，方便管理界面/日志
+ * 排查时分清楚这条记录是「进程重启后发现的」还是「这次关闭时主动收尾的」；
+ * 落库的**处置方式**（状态、`incomplete_details` 形状）与重启恢复完全一致，
+ * 只是原因字符串不同——不是另一套语义。
+ */
+export const SHUTDOWN_INCOMPLETE_REASON = 'server_shutting_down';
 
-export function recoverOnStartup(deps: RecoveryDeps, now = Date.now()): RecoveryResult {
-  const queued = deps.responses.listByStatus('queued');
-
-  const inProgress = deps.responses.listByStatus('in_progress');
+/**
+ * 把仍处于 in_progress 的记录标记为 incomplete；重启恢复与优雅关闭共用同一份
+ * 处置逻辑，只是触发时机与 `reason` 不同，避免两处各写一套不一致的语义。
+ */
+export function markInProgressAsIncomplete(
+  responses: ResponseRepository,
+  reason: string,
+  now = Date.now(),
+): ResponseRow[] {
+  const inProgress = responses.listByStatus('in_progress');
   for (const row of inProgress) {
-    const body = buildIncompleteBody(row);
-    deps.responses.complete(
+    const body = buildIncompleteBody(row, reason);
+    responses.complete(
       row.id,
       'incomplete',
       body,
@@ -45,6 +58,12 @@ export function recoverOnStartup(deps: RecoveryDeps, now = Date.now()): Recovery
       now,
     );
   }
+  return inProgress;
+}
+
+export function recoverOnStartup(deps: RecoveryDeps, now = Date.now()): RecoveryResult {
+  const queued = deps.responses.listByStatus('queued');
+  const inProgress = markInProgressAsIncomplete(deps.responses, RESTART_INCOMPLETE_REASON, now);
 
   if (inProgress.length > 0) {
     deps.logger.warn(
@@ -66,7 +85,7 @@ export function recoverOnStartup(deps: RecoveryDeps, now = Date.now()): Recovery
  * temperature 等请求参数（只在完成时随 body 落库），重启恢复时这些原样不可得，
  * 只能给出 null，属于已知的近似，不影响“状态可查、不猜测执行结果”这条硬约束。
  */
-function buildIncompleteBody(row: ResponseRow): ResponseObject {
+function buildIncompleteBody(row: ResponseRow, reason: string): ResponseObject {
   return {
     id: row.id,
     object: 'response',
@@ -81,6 +100,6 @@ function buildIncompleteBody(row: ResponseRow): ResponseObject {
     max_output_tokens: null,
     temperature: null,
     error: null,
-    incomplete_details: { reason: RESTART_INCOMPLETE_REASON },
+    incomplete_details: { reason },
   };
 }
