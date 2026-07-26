@@ -5,7 +5,11 @@
 [![CI](https://github.com/Foch0x97/M365-Codex/actions/workflows/ci.yml/badge.svg)](https://github.com/Foch0x97/M365-Codex/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**当前版本：`v0.5.0`（开发中，尚未发布可用版本）**
+**当前版本：`v0.9.0`**
+
+功能已全部实现并通过自动化测试与端到端验收（对着模拟上游）。距离 `v1.0.0` 只差一件事：
+**用真实 Microsoft 365 Copilot 账号校准上游协议**（见[「仍需真实账号确认的事项」](docs/部署与验收.md#四仍需真实账号确认的事项)）。
+在你自己的账号上验证通过前，请按"未经真实环境验证"对待。
 
 ---
 
@@ -88,7 +92,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 docker pull foch0x97/m365-codex:latest
 ```
 
-标签规则：`latest` 跟随最新正式 Release；`0.5.0` / `0.5` 由版本 tag 产生；
+标签规则：`latest` 跟随最新正式 Release；`0.9.0` / `0.9` 由版本 tag 产生；
 `main` 与 `sha-<短哈希>` 跟随主分支最新提交。
 
 ```bash

@@ -1,6 +1,6 @@
 {
   "name": "@m365-codex/web",
-  "version": "0.1.0",
+  "version": "0.9.0",
   "private": true,
   "description": "M365-Codex 管理 WebUI（独立子包，不进入根 workspace，由服务端静态托管挂载在 /ui/ 下）",
   "type": "module",

@@ -8,12 +8,53 @@
 
 ---
 
-## [未发布]
+## [0.9.0] - 2026-07-27
+
+功能全部实现并通过端到端验收。**距离 `v1.0.0` 只差用真实 Microsoft 365 Copilot 账号
+校准上游协议**（M0 探针），这一步需要账号持有者本人完成。
+
+### 新增
+
+- **文件与附件**（M6）：`/v1/files`、`/v1/uploads` 分片上传；扩展名 + MIME + 文件魔数
+  三者联合校验，未识别的二进制只存储不猜测内容；文本/代码/JSON/CSV/日志、PDF
+  （pdfjs-dist）、Office（docx/xlsx/pptx，手写 ZIP + XML 解析，不引第三方依赖）文本提取；
+  文件归属创建它的 API Key，跨 Key 不可见；单文件/单请求/单 Key 累计三层限额。
+- **`/v1/chat/completions`**（M6）：复用 Responses 内核转换，不建第二套推理逻辑。
+- **上下文重建**（M6）：Codex 这类 `store:false` 客户端不发 `previous_response_id`、
+  每轮重发全量历史，网关据此按角色标注重建完整上下文（含 `instructions`），
+  超长时从最旧历史截断且保留系统段。
+- **请求幂等**（M7）：`Idempotency-Key` 全流程；同键同请求回放同一结果，
+  同键不同请求体返回 409；流式请求不回放但仍挡并发同键。
+- **重启恢复与定时清理**（M7）：`queued` 可查询、无法确认的 `in_progress` 标为
+  `incomplete`、已发出的工具调用绝不自动重放；7 类过期数据定时清理。
+- **API Key 级限额**（M7）：每分钟请求数、每日配额、最大并发、接口与模型白名单、
+  生效与过期时间；超限 429 带 `Retry-After`，不越过全局天花板。
+- **设置与出口代理池**（M7）：6 组配置在线读写（环境变量显式设置过的项标为
+  `source=env` 且不可改）；代理节点加密存储、地址打码、健康检查、账号绑定出口粘性。
+- **管理界面**（M7）：React + Vite 原创界面，挂在 `/ui/`，覆盖概览、账号、添加账号、
+  请求、API Key、模型与能力、文件、代理池、OAuth/调度/日志/系统设置、Codex 配置生成、
+  备份恢复；API Key 明文只显示一次且需确认已保存。
+- **可观测与备份**（M8）：`GET /metrics`（Prometheus 文本，默认要求管理会话）、
+  `POST /admin/backup` 与 `POST /admin/restore`（标准 tar.gz，主密钥不入包）、
+  `GET /admin/diagnostics` 脱敏诊断包。
+
+### 修复
+
+- **SSE 流客户端断连后可能永久挂起**：写入遇到背压返回 `false` 时会等一个在已销毁的
+  socket 上永远不会到来的 `drain` 事件，导致 `inFlight` 注册永久泄漏。改为
+  `drain` 与 `close` 竞速。
+- `responses` 表上遗留的 `UNIQUE(api_key_id, idempotency_key)` 与新的流式幂等语义冲突，
+  用迁移 v8 移除（重建表时先快照 `tool_calls` 与 `conversation_bindings`，
+  避免 `DROP TABLE` 级联删掉它们）。
+
+---
+
+### 实机验收抓出的兼容性修复
 
 用真实 codex-cli 0.145.0 对着部署好的容器实跑，抓出并修掉了一批只有真实客户端
 才会暴露的问题。
 
-### 修复
+#### 修复
 
 - **运行镜像缺少 workspace 内层依赖**：npm workspaces 的依赖不一定都提升到根
   `node_modules`（根目录被 eslint 的 ajv@6 占位时，apps/server 要用的 ajv@8 会装在
@@ -29,7 +70,7 @@
 - **版本号有第二处真源**：`APP_VERSION` 是手写常量，v0.5.0 发布时漏更，`/healthz`
   报的还是 0.4.1。改为运行时读 `package.json`。
 
-### 新增
+#### 新增
 
 - `dev/mock-sydney.mjs`：独立的模拟 Sydney 上游；`dev/seed-mock-account.mjs`：写入假账号。
   两者配合可在**没有真实 M365 账号**的前提下把整条链路跑起来做验收（不进生产镜像）。
