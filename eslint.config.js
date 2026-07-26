@@ -50,6 +50,11 @@ export default tseslint.config(
         URL: 'readonly',
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
+        // Node 18+ 内置的 fetch 及其配套类型，验收脚本用来发请求
+        fetch: 'readonly',
+        FormData: 'readonly',
+        Blob: 'readonly',
+        AbortController: 'readonly',
       },
     },
     rules: {
