@@ -327,10 +327,15 @@ export interface BulkImportProxyRequest {
   urls: string;
 }
 
+/**
+ * 字段名与服务端 `apps/server/src/routes/adminOps.ts` 的
+ * `POST /admin/proxies/bulk` 实际返回严格对齐：`created`/`failed` 计数，
+ * `results` 里逐行给出 `ok`/`id`（成功时）/`error`（失败时），没有 `succeeded`/`errors` 这两个字段。
+ */
 export interface BulkImportProxyResult {
-  succeeded: number;
+  created: number;
   failed: number;
-  errors: Array<{ line: string; message: string }>;
+  results: Array<{ line: string; ok: boolean; id?: string; error?: string }>;
 }
 
 export interface ProxyCheckResult {
@@ -366,8 +371,14 @@ export interface FileListResponse {
   total_bytes: number;
 }
 
+/**
+ * 字段名与服务端 `apps/server/src/routes/adminOps.ts` 的
+ * `POST /admin/files/cleanup` 实际返回严格对齐：过期文件与未完成上传分开计数，
+ * 没有笼统的单一 `deleted` 字段。
+ */
 export interface FilesCleanupResult {
-  deleted: number;
+  deleted_files: number;
+  deleted_uploads: number;
   freed_bytes: number;
 }
 
@@ -378,4 +389,57 @@ export type CapabilityStatus = 'native' | 'local' | 'upstream_decided' | 'experi
 export interface CapabilitiesResponse {
   models: Array<{ id: string; source: string }>;
   matrix: Array<{ feature: string; status: CapabilityStatus; detail: string }>;
+}
+
+// ---- 备份 / 恢复 / 诊断（对应服务端 apps/server/src/routes/backup.ts） ----
+
+/** 与服务端 `BackupStore#save`/`#list`（apps/server/src/backup/store.ts）返回形状一致。 */
+export interface BackupInfo {
+  id: string;
+  bytes: number;
+  created_at: number;
+}
+
+export interface BackupListResponse {
+  items: BackupInfo[];
+}
+
+/** 与服务端 `BackupManifest`（apps/server/src/backup/service.ts）字段一致。 */
+export interface BackupManifest {
+  format_version: number;
+  app_version: string;
+  schema_version: number;
+  master_key_version: number;
+  created_at: number;
+  includes_files: boolean;
+  file_count: number;
+}
+
+/**
+ * `POST /admin/restore` 的返回体。`requires_restart` 恒为 true——
+ * 服务端只负责校验并落盘，正在运行的进程仍持有旧库连接，必须重启才会生效。
+ */
+export interface RestoreResult {
+  restored: boolean;
+  requires_restart: boolean;
+  message: string;
+  manifest: BackupManifest;
+}
+
+/** 与服务端 `DiagnosticsReport`（apps/server/src/observability/diagnostics.ts）字段一致。 */
+export interface DiagnosticsReport {
+  generated_at: number;
+  app_version: string;
+  system_status: SystemStatus;
+  uptime_ms: number;
+  schema: { current: number; expected: number; ok: boolean };
+  accounts: Record<string, number>;
+  accounts_usable: number;
+  in_flight_requests: number;
+  recent_errors: Record<string, number>;
+  storage: { db_bytes: number; files_bytes: number; file_count: number };
+  maintenance: Array<{ name: string; last_run_at: number | null; last_error: string | null }>;
+  readiness: Array<{ name: string; ok: boolean }>;
+  config: Record<string, unknown>;
+  notes: string[];
 }

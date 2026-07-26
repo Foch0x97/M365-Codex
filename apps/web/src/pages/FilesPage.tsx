@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api } from '../api';
+import { api, type FilesCleanupResult } from '../api';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { Layout } from '../components/Layout';
 import { AsyncSection } from '../components/StateBlock';
@@ -11,7 +11,7 @@ export function FilesPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ id: string; error: unknown } | null>(null);
   const [cleaning, setCleaning] = useState(false);
-  const [cleanupResult, setCleanupResult] = useState<{ deleted: number; freed_bytes: number } | null>(null);
+  const [cleanupResult, setCleanupResult] = useState<FilesCleanupResult | null>(null);
   const [cleanupError, setCleanupError] = useState<unknown>(null);
 
   const handleDelete = (id: string, filename: string) => {
@@ -45,7 +45,8 @@ export function FilesPage() {
           <div className="stat-label">立即执行一次过期清理</div>
           {cleanupResult !== null && (
             <div className="text-muted">
-              上次清理删除 {cleanupResult.deleted} 个文件，释放 {formatBytes(cleanupResult.freed_bytes)}
+              上次清理删除文件 {cleanupResult.deleted_files} 个、未完成上传 {cleanupResult.deleted_uploads} 个，
+              释放 {formatBytes(cleanupResult.freed_bytes)}
             </div>
           )}
           {cleanupError !== null && <ErrorBanner error={cleanupError} />}

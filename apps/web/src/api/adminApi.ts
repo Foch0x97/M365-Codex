@@ -5,12 +5,14 @@ import type {
   ApiKeyView,
   AuditLogEntry,
   AuthorizeUrlResponse,
+  BackupInfo,
   BulkImportProxyRequest,
   BulkImportProxyResult,
   CapabilitiesResponse,
   CodexConfigResponse,
   CreateApiKeyRequest,
   CreateProxyRequest,
+  DiagnosticsReport,
   FileListResponse,
   FilesCleanupResult,
   LoginResponse,
@@ -21,6 +23,7 @@ import type {
   ProxyView,
   RequestDetail,
   RequestListResponse,
+  RestoreResult,
   SessionResponse,
   SettingsGroupName,
   SettingsResponse,
@@ -76,4 +79,10 @@ export interface AdminApi {
   getCodexConfig(apiKeyEnv: string): Promise<CodexConfigResponse>;
 
   getAuditLogs(limit?: number): Promise<AuditLogEntry[]>;
+
+  createBackup(options?: { includeFiles?: boolean }): Promise<BackupInfo>;
+  listBackups(): Promise<BackupInfo[]>;
+  downloadBackup(id: string): Promise<Blob>;
+  restoreBackup(file: File): Promise<RestoreResult>;
+  getDiagnostics(): Promise<DiagnosticsReport>;
 }

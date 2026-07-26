@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { api, type ProxyView } from '../api';
+import { api, type BulkImportProxyResult, type ProxyView } from '../api';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { Layout } from '../components/Layout';
 import { AsyncSection } from '../components/StateBlock';
@@ -80,7 +80,7 @@ function BulkImportForm({ onImported }: { onImported: () => void }) {
   const [urls, setUrls] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [result, setResult] = useState<{ succeeded: number; failed: number } | null>(null);
+  const [result, setResult] = useState<BulkImportProxyResult | null>(null);
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -89,7 +89,7 @@ function BulkImportForm({ onImported }: { onImported: () => void }) {
     api
       .bulkImportProxies({ urls })
       .then((res) => {
-        setResult({ succeeded: res.succeeded, failed: res.failed });
+        setResult(res);
         setUrls('');
         onImported();
       })
@@ -115,8 +115,21 @@ function BulkImportForm({ onImported }: { onImported: () => void }) {
         </div>
       )}
       {result !== null && (
-        <div className="text-muted" style={{ marginBottom: 12 }}>
-          成功 {result.succeeded} 条，失败 {result.failed} 条
+        <div style={{ marginBottom: 12 }}>
+          <div className="text-muted">
+            成功 {result.created} 条，失败 {result.failed} 条
+          </div>
+          {result.results.some((r) => !r.ok) && (
+            <ul style={{ marginTop: 6 }}>
+              {result.results
+                .filter((r) => !r.ok)
+                .map((r, i) => (
+                  <li key={`${r.line}-${i}`} className="text-faint">
+                    {r.line || '（空行）'}：{r.error ?? '未知错误'}
+                  </li>
+                ))}
+            </ul>
+          )}
         </div>
       )}
       <button type="submit" className="btn" disabled={submitting || urls.trim().length === 0}>

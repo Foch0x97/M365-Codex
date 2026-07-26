@@ -32,9 +32,13 @@ export function LoggingSettingsPage() {
               options: [
                 { value: 'strict', label: 'strict（默认，不存提示词/输出/上传/认证）' },
                 { value: 'metadata', label: 'metadata（仅结构化元数据）' },
-                { value: 'debug', label: 'debug（临时排障，会自动过期恢复 strict）' },
+                { value: 'debug', label: 'debug（记录更多请求信息，需手动改回）' },
               ],
-              hint: '切到 debug 即便如此也不会记录 Token 与完整认证 Header；到期自动恢复 strict 并写入审计日志。',
+              hint:
+                '警告：服务端没有自动过期机制——切到 debug 后会无限期持续生效，不会自己恢复成 strict，' +
+                '必须手动改回来才会停止。debug 模式会额外记录请求/响应内容的片段（最多约 200 个字符的样本），' +
+                '虽然 Token、密码等凭据字段在任何模式下都会脱敏，但内容片段仍可能包含敏感信息。' +
+                '仅在临时排障时短暂开启，排查完请立刻手动切回 strict，不要让它长期停留在 debug。',
             },
           ],
         },

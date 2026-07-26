@@ -1,15 +1,18 @@
 import type { AdminApi } from './adminApi';
-import { request } from './http';
+import { request, requestBlob, requestMultipart } from './http';
 import type {
   AccountView,
   ApiKeyCreated,
   ApiKeyView,
   AuditLogEntry,
   AuthorizeUrlResponse,
+  BackupInfo,
+  BackupListResponse,
   BulkImportProxyRequest,
   BulkImportProxyResult,
   CapabilitiesResponse,
   CodexConfigResponse,
+  DiagnosticsReport,
   FileListResponse,
   FilesCleanupResult,
   LoginResponse,
@@ -20,6 +23,7 @@ import type {
   ProxyView,
   RequestDetail,
   RequestListResponse,
+  RestoreResult,
   SessionResponse,
   SettingsGroupName,
   SettingsResponse,
@@ -92,4 +96,14 @@ export const realAdminApi: AdminApi = {
   getAuditLogs: (limit) => request<{ data: AuditLogEntry[] }>('/admin/audit-logs', { query: { limit } }).then(
     (r) => r.data,
   ),
+
+  // 备份 / 恢复 / 诊断：路径与返回字段见 apps/server/src/routes/backup.ts。
+  // 注：服务端当前实现里 POST /admin/backup 尚未真正读取 body 里的 includeFiles
+  // （处理函数直接调用 context.backup.create() 不带参数），这里仍按契约把它传过去，
+  // 服务端补上读取逻辑后前端不需要再改。
+  createBackup: (options) => request<BackupInfo>('/admin/backup', { method: 'POST', body: options ?? {} }),
+  listBackups: () => request<BackupListResponse>('/admin/backup').then((r) => r.items),
+  downloadBackup: (id) => requestBlob(`/admin/backup/${id}/download`),
+  restoreBackup: (file) => requestMultipart<RestoreResult>('/admin/restore', 'file', file),
+  getDiagnostics: () => request<DiagnosticsReport>('/admin/diagnostics'),
 };

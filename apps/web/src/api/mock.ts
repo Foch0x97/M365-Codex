@@ -6,13 +6,16 @@ import {
   type ApiKeyCreated,
   type ApiKeyView,
   type AuditLogEntry,
+  type BackupInfo,
   type CreateApiKeyRequest,
   type CreateProxyRequest,
+  type DiagnosticsReport,
   type FileListItem,
   type OverviewResponse,
   type ProxyView,
   type RequestDetail,
   type RequestListItem,
+  type RestoreResult,
   type SettingsResponse,
   type UpdateApiKeyRequest,
 } from './types';
@@ -219,6 +222,14 @@ const auditLogs: AuditLogEntry[] = [
 
 let requestIdSeq = 100;
 
+let backups: BackupInfo[] = [];
+let backupSeq = 1;
+
+function makeBackupId(): string {
+  const seq = (backupSeq++).toString(16).padStart(8, '0');
+  return `bkp_${Date.now()}_${seq}`;
+}
+
 export const mockAdminApi: AdminApi = {
   login: (password) => {
     if (password.trim().length === 0) {
@@ -375,7 +386,7 @@ export const mockAdminApi: AdminApi = {
 
   listFiles: ({ limit }) => delay({ items: files.slice(0, limit ?? files.length), total_bytes: 2_097_152 }),
   deleteFile: () => delay(undefined),
-  cleanupFiles: () => delay({ deleted: 0, freed_bytes: 0 }),
+  cleanupFiles: () => delay({ deleted_files: 0, deleted_uploads: 0, freed_bytes: 0 }),
 
   listProxies: () => delay([...proxies]),
   createProxy: (payload: CreateProxyRequest) => {
@@ -399,7 +410,8 @@ export const mockAdminApi: AdminApi = {
   },
   bulkImportProxies: (payload) => {
     const lines = payload.urls.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
-    return delay({ succeeded: lines.length, failed: 0, errors: [] });
+    const results = lines.map((line) => ({ line, ok: true, id: `proxy_${proxies.length + 1}` }));
+    return delay({ created: lines.length, failed: 0, results });
   },
   updateProxy: (id, payload) => {
     const found = proxies.find((p) => p.id === id);
@@ -458,6 +470,64 @@ export const mockAdminApi: AdminApi = {
     }),
 
   getAuditLogs: (limit) => delay(auditLogs.slice(0, limit ?? auditLogs.length)),
+
+  createBackup: (options) => {
+    const includeFiles = options?.includeFiles ?? true;
+    const created: BackupInfo = {
+      id: makeBackupId(),
+      bytes: includeFiles ? 3_251_200 : 1_048_576,
+      created_at: Date.now(),
+    };
+    backups = [created, ...backups];
+    return delay(created);
+  },
+  listBackups: () => delay([...backups]),
+  downloadBackup: (id) => {
+    const found = backups.find((b) => b.id === id);
+    if (found === undefined) notFound('备份包不存在');
+    return delay(new Blob([`mock-backup:${id}`], { type: 'application/gzip' }));
+  },
+  restoreBackup: () =>
+    delay<RestoreResult>({
+      restored: true,
+      requires_restart: true,
+      message: '备份已校验并写入数据目录，需重启服务后才会生效',
+      manifest: {
+        format_version: 1,
+        app_version: '0.8.0-mock',
+        schema_version: 8,
+        master_key_version: 1,
+        created_at: Date.now() - 3_600_000,
+        includes_files: true,
+        file_count: files.length,
+      },
+    }),
+  getDiagnostics: () =>
+    delay<DiagnosticsReport>({
+      generated_at: Date.now(),
+      app_version: '0.8.0-mock',
+      system_status: 'normal',
+      uptime_ms: 3_723_000,
+      schema: { current: 8, expected: 8, ok: true },
+      accounts: {
+        probing: 0,
+        online: 1,
+        busy: 0,
+        cooldown: 1,
+        reauth_required: 1,
+        disabled: 0,
+        unsupported: 0,
+        error: 0,
+      },
+      accounts_usable: 1,
+      in_flight_requests: 1,
+      recent_errors: { rate_limited: 2 },
+      storage: { db_bytes: 1_048_576, files_bytes: 2_097_152, file_count: files.length },
+      maintenance: [{ name: 'files_cleanup', last_run_at: Date.now() - 300_000, last_error: null }],
+      readiness: [{ name: 'db', ok: true }],
+      config: { log_privacy_mode: 'strict' },
+      notes: [],
+    }),
 };
 
 function maskKey(plaintext: string): string {
