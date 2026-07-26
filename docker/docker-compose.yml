@@ -9,7 +9,7 @@
 services:
   m365-codex:
     # 镜像发布在 Docker Hub。可用 M365_CODEX_IMAGE 覆盖具体版本，例如
-    # M365_CODEX_IMAGE=foch0x97/m365-codex:0.4.1
+    # M365_CODEX_IMAGE=foch0x97/m365-codex:0.5.0
     image: ${M365_CODEX_IMAGE:-foch0x97/m365-codex:latest}
     # 若要本地构建镜像，取消下面注释：
     # build:
