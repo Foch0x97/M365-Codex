@@ -5,7 +5,7 @@
 [![CI](https://github.com/Foch0x97/M365-Codex/actions/workflows/ci.yml/badge.svg)](https://github.com/Foch0x97/M365-Codex/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**当前版本：`v0.9.0`**
+**当前版本：`v0.9.1`**
 
 功能已全部实现并通过自动化测试与端到端验收。上游协议已用真实账号校准过：
 WebSocket 握手、请求体格式、响应帧解析都以实际流量为准（见 `adapter/codecV1.ts`）。
@@ -124,7 +124,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 docker pull foch0x97/m365-codex:latest
 ```
 
-标签规则：`latest` 跟随最新正式 Release；`0.9.0` / `0.9` 由版本 tag 产生；
+标签规则：`latest` 跟随最新正式 Release；`0.9.1` / `0.9` 由版本 tag 产生；
 `main` 与 `sha-<短哈希>` 跟随主分支最新提交。
 
 ```bash
