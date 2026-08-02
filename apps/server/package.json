@@ -18,7 +18,7 @@
     "@m365-codex/shared": "*",
     "ajv": "^8.20.0",
     "fastify": "^5.2.0",
-    "https-proxy-agent": "^7.0.6",
+    "https-proxy-agent": "^9.1.0",
     "pdfjs-dist": "^6.1.200",
     "pino": "^9.6.0",
     "undici": "^7.29.0",
